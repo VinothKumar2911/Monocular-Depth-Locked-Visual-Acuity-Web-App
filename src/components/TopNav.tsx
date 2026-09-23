@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { preloadRoute } from "../routePreload";
 
 const links = [
   { to: "/", label: "Home", end: true },
@@ -19,7 +20,14 @@ export default function TopNav() {
       </NavLink>
       <div className="nav-links">
         {links.map((l) => (
-          <NavLink key={l.to} to={l.to} end={l.end} className={({ isActive }) => (isActive ? "active" : "")}>
+          <NavLink
+            key={l.to}
+            to={l.to}
+            end={l.end}
+            className={({ isActive }) => (isActive ? "active" : "")}
+            onMouseEnter={() => preloadRoute(l.to)}
+            onFocus={() => preloadRoute(l.to)}
+          >
             {l.label}
           </NavLink>
         ))}

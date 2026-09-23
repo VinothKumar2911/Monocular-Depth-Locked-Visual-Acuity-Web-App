@@ -3,13 +3,25 @@ import { Suspense, lazy } from "react";
 import { VisionProvider } from "./context/VisionContext";
 import TopNav from "./components/TopNav";
 import Home from "./pages/Home";
+import { routeImports } from "./routePreload";
 
-const CameraSetup = lazy(() => import("./pages/CameraSetup"));
-const Calibration = lazy(() => import("./pages/Calibration"));
-const VisualAcuityTest = lazy(() => import("./pages/VisualAcuityTest"));
-const Results = lazy(() => import("./pages/Results"));
-const Validation = lazy(() => import("./pages/Validation"));
-const About = lazy(() => import("./pages/About"));
+const CameraSetup = lazy(routeImports["/camera-setup"]);
+const Calibration = lazy(routeImports["/calibration"]);
+const VisualAcuityTest = lazy(routeImports["/test"]);
+const Results = lazy(routeImports["/results"]);
+const Validation = lazy(routeImports["/validation"]);
+const About = lazy(routeImports["/about"]);
+
+function RouteLoading() {
+  return (
+    <div className="page route-loading" role="status" aria-live="polite">
+      <div className="loading-kicker">Preparing workspace</div>
+      <div className="loading-line loading-line-wide" />
+      <div className="loading-line" />
+      <div className="loading-panel" />
+    </div>
+  );
+}
 
 export default function App() {
   return (
@@ -17,7 +29,7 @@ export default function App() {
       <HashRouter>
         <div className="app-shell">
           <TopNav />
-          <Suspense fallback={<div className="page narrow muted">Loading…</div>}>
+          <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/camera-setup" element={<CameraSetup />} />
