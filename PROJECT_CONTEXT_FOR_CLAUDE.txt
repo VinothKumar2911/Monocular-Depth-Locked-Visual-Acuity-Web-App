@@ -1,0 +1,465 @@
+    PROJECT HANDOFF: MONOCULAR DEPTH-LOCKED VISUAL ACUITY
+    =====================================================
+
+    PURPOSE OF THIS FILE
+    --------------------
+    This is an implementation-oriented briefing for an AI assistant (Claude or
+    another coding assistant) that needs to understand this repository before
+    making changes. It summarizes the product goal, current code architecture,
+    end-to-end flow, formulas, dependencies, persistence, tests, and research
+    limitations. Treat source code as authoritative if anything here conflicts
+    with the implementation.
+
+
+    1. PROJECT SUMMARY
+    ------------------
+    This repository is a browser-based research prototype for distance-adaptive
+    visual acuity testing. It uses an ordinary webcam and face/iris landmarks to
+    estimate how far the user's eyes are from the camera. It then changes the
+    physical size of a vector Tumbling E so its visual angle remains tied to the
+    chosen logMAR difficulty while the user changes distance.
+
+    The intended experiment is to test whether an IPD-based pinhole camera model,
+    with personal camera calibration and physical screen calibration, can support
+    a useful visual-acuity workflow without a depth camera. The application also
+    includes a research validation screen to compare webcam distance estimates
+    with a tape- or laser-measured distance.
+
+    This is a research prototype only. Its acuity result is experimental, not a
+    clinical diagnosis or a replacement for a professional eye examination.
+
+
+    2. WHAT IS IMPLEMENTED
+    ----------------------
+    - React single-page application with Home, Camera Setup, Calibration, Test,
+    Results, Validation, and About routes.
+    - Local webcam acquisition using getUserMedia (video only; no audio).
+    - MediaPipe Face Landmarker inference in the browser, including iris landmarks
+    and facial transformation matrices.
+    - Eye landmark extraction and pixel interpupillary-distance measurement.
+    - Effective focal-length calibration from one or more known distances.
+    - Distance calculation using the pinhole-camera relationship, followed by
+    moving-window diagnostics and exponential smoothing.
+    - Head-pose estimation and guidance/temporary test pause for unacceptable
+    pose or loss of reliable face tracking.
+    - Manual physical screen calibration, converting CSS pixels to pixels/mm.
+    - SVG-based Tumbling E sizing and orientation selection.
+    - 1-up/1-down logMAR staircase, response capture, results, plots, and exports.
+    - Research validation records, error metrics, PASS/FAIL against a configurable
+    tolerance, temporal raw vs. EMA smoothed frame recording, interactive smoothing
+    charts, tabular view, and high-resolution paper figure generator (distance_smoothing.png).
+    - PWA installability and app-shell caching configuration.
+    - Vitest unit tests for geometry, calibration, smoothing, staircase, and
+    error metrics.
+
+    Important boundaries:
+    - The primary distance estimator is geometry based. It is not AI monocular
+    depth inference.
+    - src/vision/monocularDepth.ts is a placeholder interface. It returns
+    available=false and distanceM=null; no neural depth model is integrated.
+    - The +/-3 cm value is a research target, not a measured guarantee. Validation
+    computes and displays actual observed values and may report FAIL.
+    - The application does not provide clinically validated visual-acuity
+    measurement.
+
+
+    3. TECHNOLOGY
+    -------------
+    Runtime dependencies (package.json):
+    - React 19 and React DOM: UI rendering.
+    - TypeScript: application language and type checking.
+    - Vite: development server and production bundler.
+    - react-router-dom: HashRouter page navigation.
+    - @mediapipe/tasks-vision: browser Face Landmarker and vision WASM runtime.
+    - idb: IndexedDB wrapper for trial and validation records.
+    - recharts: results charts.
+    - vite-plugin-pwa: service worker, installability, and app-shell precaching.
+
+    Development/test tools:
+    - Vitest and jsdom: unit tests.
+    - oxlint: linting.
+    - TypeScript project build via tsc -b.
+
+    The Face Landmarker WASM and task model are currently loaded from CDN URLs in
+    src/vision/faceLandmarker.ts. They are not bundled into the app shell. The
+    model is configured for VIDEO mode, GPU delegate, up to two faces, and output
+    facial transformation matrices. Webcam access requires a secure browser
+    context; localhost is suitable for development and deployed use requires
+    HTTPS.
+
+
+    4. REPOSITORY MAP
+    -----------------
+    src/App.tsx
+    Root React composition, HashRouter routes, route-level lazy loading,
+    VisionProvider, navigation, and footer.
+
+    src/routePreload.ts
+    Lazy import loaders shared with App.
+
+    src/config.ts
+    Central configuration for target visual angle, default IPD, camera request,
+    smoothing, head-pose bounds, resize threshold, staircase settings, and
+    validation tolerance.
+
+    src/context/VisionContext.tsx
+    Owns the camera stream, MediaPipe per-frame loop, tracking state, smoother,
+    model loading/error state, and shared camera controls. Mounted above routes
+    so tracking can persist during navigation.
+
+    src/vision/faceLandmarker.ts
+    MediaPipe initialization, CDN asset URLs, model options, and video-frame
+    inference wrapper.
+
+    src/vision/eyeTracking.ts
+    Converts normalized face landmarks to source-frame pixels, selects iris
+    centers (468 and 473) or eye-corner fallback, computes IPD, and assigns a
+    heuristic confidence.
+
+    src/vision/headPose.ts
+    Extracts yaw, pitch, and roll from MediaPipe's facial transform matrix and
+    evaluates configured angular tolerances.
+
+    src/vision/distanceEstimator.ts
+    Converts pixel IPD and effective focal length to distance; solves focal
+    length from known-distance calibration samples.
+
+    src/vision/distanceSmoothing.ts
+    Keeps a recent raw-distance window, computes median and standard deviation,
+    dampens large outliers, applies EMA smoothing, and provides benchmark temporal
+    series generation (generateDemoTemporalSeries).
+
+    src/vision/monocularDepth.ts
+    Optional future comparison API only; there is no active depth model.
+
+    src/calibration/cameraCalibration.ts
+    Calibration record types and multi-point focal-length averaging.
+
+    src/calibration/screenCalibration.ts
+    pixels/mm conversion and mm/pixel conversion helpers.
+
+    src/calibration/calibrationStorage.ts
+    localStorage save/load/clear operations for both calibrations.
+
+    src/visionAcuity/visualAngle.ts
+    Physical optotype height for target angle/logMAR and inverse angle check.
+
+    src/visionAcuity/optotypeSizing.ts
+    Combines physical height with screen calibration and provides a distance
+    change threshold check.
+
+    src/visionAcuity/staircase.ts
+    Staircase state, difficulty updates, reversal counting, termination, and
+    randomized orientation with no immediate repeat.
+
+    src/visionAcuity/scoring.ts
+    Reduces trial history to the displayed acuity estimate and helpers for
+    distance stability.
+
+    src/utils/math.ts
+    Pure math functions and metrics. Kept free of React, DOM, and MediaPipe
+    dependencies to make isolated testing straightforward.
+
+    src/utils/storage.ts
+    IndexedDB schema and trial/validation record operations, plus shared
+    localStorage JSON helpers.
+
+    src/utils/csvExport.ts
+    CSV/JSON serialization and browser file download helpers.
+
+    src/pages/
+    Home.tsx, CameraSetup.tsx, Calibration.tsx, VisualAcuityTest.tsx,
+    Results.tsx, Validation.tsx, About.tsx implement page workflows.
+
+    src/components/
+    Reusable camera preview, face status, Tumbling E, buttons, calibration
+    cards, debug display, distance display, navigation, workflow UI, and
+    DistanceSmoothingChart (interactive Recharts graph, temporal data table,
+    CSV exporter, and distance_smoothing.png canvas image renderer).
+
+    src/__tests__/
+    math.test.ts and pipeline.test.ts cover pure math and core algorithm paths.
+
+
+    5. END-TO-END USER AND DATA FLOW
+    -------------------------------
+    1. The user opens the app. App mounts VisionProvider once and renders routes
+    through HashRouter. Individual pages are lazy-loaded.
+
+    2. On Camera Setup or Calibration, the user grants camera permission. The app
+    requests front-facing video at ideal 1280x720 and does not request audio.
+    Actual dimensions come from the browser's video track.
+
+    3. VisionContext loads the Face Landmarker and schedules frame processing with
+    requestAnimationFrame. For each ready video frame, it:
+    a. runs MediaPipe Face Landmarker inference;
+    b. extracts eye/iris points and their pixel separation;
+    c. extracts head pose;
+    d. loads camera calibration, or uses the rough demo focal-length fallback
+        if no camera calibration exists;
+    e. calculates raw distance from focal length, assumed real IPD, and pixel
+        IPD;
+    f. pushes the result through DistanceSmoother;
+    g. publishes eye, pose, raw/smoothed distance, spread, FPS, and frame size.
+
+    4. Camera calibration: the Calibration page offers known distances 1.50 m,
+    2.20 m, and 3.00 m. CalibrationCard captures a stable sample at a selected
+    distance. The user supplies/accepts an assumed real IPD (default 63 mm).
+    Each point implies a focal length; the points are averaged and stored in
+    localStorage. The default UI workflow labels this as personal calibration,
+    although its accuracy still depends on the entered IPD and measured
+    distance.
+
+    5. Screen calibration: the user adjusts an on-screen bar against a physical
+    ruler and saves its displayed CSS-pixel width and physical width. This
+    yields pixels/mm and is stored in localStorage.
+
+    6. The Visual Acuity Test page requires camera, face, and both saved
+    calibrations before enabling Start. It requests fullscreen where supported,
+    initializes a staircase at logMAR 0.3, and selects a random E orientation.
+
+    7. While the test is active, tracking is considered usable when a smoothed
+    distance exists, there is at most one face, and a present head-pose result
+    is within tolerance. On loss, the app pauses the optotype and answers.
+    For usable tracking, distance changes above the configured threshold cause
+    optotype size to be recalculated for the current distance and logMAR.
+
+    8. The user answers using one of four direction buttons. The app compares the
+    response with the E orientation, records response, correctness, reaction
+    time, distance, physical and pixel size, and logMAR in IndexedDB, then
+    updates the staircase. It picks a new orientation without repeating the
+    previous one. At completion it stores the last session ID and navigates to
+    Results.
+
+    9. Results reload the session's trial records from IndexedDB, reconstruct the
+    staircase from answers, show the score, trial table, charts, distance
+    statistics, and CSV/JSON exports.
+
+    10. Validation is a separate research workflow. The user enters a tape/laser
+        distance, captures approximately 3 seconds of raw and smoothed estimates,
+        and the app stores frame-by-frame temporal tracking samples (t, raw distance D_t,
+        EMA distance D_t^EMA, reference distance D_ref), mean estimate, errors, current
+        IPD/pose/confidence, expected optotype size, optional ruler-measured size,
+        and PASS/FAIL. Section 5 renders interactive temporal distance smoothing
+        line charts, noise dampening statistics, tabular views, CSV dataset export,
+        and a high-resolution canvas figure downloader (distance_smoothing.png).
+
+
+    6. CORE MATHEMATICS AND UNITS
+    -----------------------------
+    Pixel IPD:
+    IPD_px = sqrt((x_right - x_left)^2 + (y_right - y_left)^2)
+
+    Landmarks are normalized [0,1] coordinates, multiplied by the source video
+    width/height to obtain pixel coordinates. Preferred iris centers are MediaPipe
+    indices 468 and 473. If those points are absent, the implementation uses the
+    average of the eye corners (33/133 and 362/263) with reduced confidence.
+
+    Pinhole distance model:
+    D = f * W / w
+    D_mm = focalLength_px * realIPD_mm / measuredIPD_px
+    D_m = D_mm / 1000
+
+    where f is effective focal length in pixels, W is assumed/measured physical
+    IPD in mm, and w is measured IPD in pixels. Calibration solves the inverse:
+    f = D_mm * w / W
+
+    For several calibration points, implementation calculates f for each point
+    and takes the arithmetic mean. It does not currently fit a regression model.
+
+    Screen calibration:
+    pixelsPerMM = displayedReferencePixels / physicalReferenceMM
+    size_px = size_mm * pixelsPerMM
+    size_mm = size_px / pixelsPerMM
+
+    Visual angle and size:
+    theta_rad = arcminutes * pi / (180 * 60)
+    H = 2 * D * tan(theta_rad / 2)
+    theta_rad_actual = 2 * atan((H / 2) / D)
+
+    H and D must use the same physical unit. Implementation uses H in mm and D
+    converted from meters to mm. Default target is 5 arcminutes. It is the full
+    optotype height that corresponds to the target angular size.
+
+    logMAR sizing:
+    Snellen denominator = 20 * 10^logMAR
+    target angle = 5 arcmin * (Snellen denominator / 20)
+
+    Thus logMAR 0 maps to 20/20 and +0.1 makes the optotype larger/easier. Negative
+    logMAR values make it smaller/harder.
+
+    Example at 5 arcminutes (approximately):
+    Distance 1.50 m -> height 2.18 mm
+    Distance 2.20 m -> height 3.20 mm
+    Distance 3.00 m -> height 4.36 mm
+
+    Smoothing:
+    EMA: D_t^EMA = alpha * D_t + (1 - alpha) * D_{t-1}^EMA
+
+    Default alpha is 0.2 (CONFIG.defaultSmoothingAlpha). DistanceSmoother keeps up
+    to 15 raw values, reports the window median and population standard deviation,
+    and after at least five samples substitutes the median for a sample more than 4
+    standard deviations away before applying EMA. The optotype resize threshold
+    defaults to 0.005 m. Temporal validation exports frame series comparing D_t
+    (raw webcam estimate), D_t^EMA (filtered estimate), and D_ref (physical reference),
+    generating distance_smoothing.png figures for publication.
+
+    Validation metrics:
+    absolute error = abs(estimated - actual)
+    percentage error = abs(estimated - actual) / actual * 100
+    MAE = mean(abs(estimated_i - actual_i))
+    RMSE = sqrt(mean((estimated_i - actual_i)^2))
+    maximum error = max(abs(estimated_i - actual_i))
+
+
+    7. TUMBLING E AND STAIRCASE
+    ---------------------------
+    The Tumbling E is a geometric SVG optotype, not a font glyph. It uses a 5x5
+    grid: the full height is the computed pixel size and each bar/spine thickness
+    is one fifth of that height. The four orientations are 0, 90, 180, and 270
+    degrees. Direction-to-angle convention is owned by TumblingE.tsx and
+    DirectionButtons.tsx; preserve that mapping when modifying either component.
+
+    Staircase configuration in src/config.ts:
+    - starting logMAR: 0.3 (about 20/40)
+    - step: 0.1 logMAR
+    - bounds: -0.3 to 1.0
+    - stop after 6 direction reversals, or 40 trials, whichever comes first
+    - correct response decreases logMAR (smaller/harder)
+    - incorrect response increases logMAR (larger/easier)
+
+    The score implementation averages the logMAR values of the last up to six
+    recorded trials, then formats the result as a rounded 20/X Snellen-style
+    string. It does not select only reversal trials. The result is labeled
+    experimental in the UI.
+
+
+    8. STORAGE AND PRIVACY
+    ----------------------
+    localStorage keys:
+    - mdva.cameraCalibration
+    - mdva.screenCalibration
+    - mdva.settings (declared in storage helper; no settings workflow should be
+    assumed unless another module uses it)
+    - mdva.lastSessionId (used to connect the latest completed test to Results)
+
+    IndexedDB database:
+    - database: monocular-depth-va, version 1
+    - object stores: trials and validation
+    - both stores have a sessionId index
+    - trial records include distance, optotype dimensions, orientation/response,
+    correctness, reaction time, and logMAR
+    - validation records include actual/estimated distance, errors, IPD, head pose,
+    confidence, size checks, and pass/fail
+
+    Video frames are processed locally in the browser and are not saved or
+    uploaded by this application. Derived numeric measurements and test records
+    remain in browser storage unless explicitly exported by the user. The vision
+    model/WASM files are downloaded from their configured CDN URLs.
+
+
+    9. CONFIGURATION REFERENCE
+    --------------------------
+    src/config.ts is the central source for:
+    - targetVisualAngleArcMin = 5
+    - defaultIPDmm = 63
+    - targetDistanceToleranceM = 0.03
+    - defaultSmoothingAlpha = 0.2; allowed UI range 0.05 to 0.6
+    - calibrationStableFrameCount = 20
+    - distanceChangeThresholdM = 0.005
+    - max head pose: yaw 10 degrees, pitch 10 degrees, roll 15 degrees
+    - requested ideal camera resolution: 1280x720; target FPS constant 30
+    - starting logMAR 0.3, step 0.1, range -0.3 to 1.0
+    - required reversals 6, maximum trials 40
+    - referenceDistanceM = 6 for acuity notation/convention
+
+    Before changing behavior, locate its owning module and update tests as needed.
+    Avoid scattering new magic values through page components when they belong
+    in CONFIG.
+
+
+    10. DEVELOPMENT AND CHECKS
+    --------------------------
+    Prerequisite: a recent Node.js/npm installation.
+
+    Install dependencies:
+    npm install
+
+    Run development server:
+    npm run dev
+
+    Run unit tests:
+    npm run test
+
+    Type-check and production build:
+    npm run build
+
+    Lint:
+    npm run lint
+
+    Serve production build locally:
+    npm run preview
+
+    The key automated test files are src/__tests__/math.test.ts and
+    src/__tests__/pipeline.test.ts. They test exact-angle geometry and examples,
+    pinhole calibration round trips, screen px/mm conversion, staircase behavior,
+    orientation non-repetition, smoothing, and validation error metrics. These
+    tests do not prove webcam accuracy, browser/device compatibility, clinical
+    validity, or real-world psychophysical test reliability.
+
+
+    11. RESEARCH LIMITATIONS AND IMPLEMENTATION NOTES
+    -------------------------------------------------
+    - Focal length / field of view vary by webcam. Personal calibration is
+    strongly preferred; the uncalibrated fallback uses 0.9 * video width as a
+    rough focal length and is a demo approximation, not research-grade.
+    - Accurate distance also depends on the assumed real-world IPD. The default
+    63 mm is a population assumption, not an individual measurement.
+    - Webcam lens distortion, image processing, pose-dependent foreshortening,
+    camera placement offset, lighting, and landmark noise are not fully
+    corrected.
+    - The camera-to-screen offset is saved as a calibration field but the current
+    distance-to-eye / optotype model does not apply a geometric offset correction.
+    - Head pose is estimated and used to pause the active test outside tolerance;
+    it is not a full pose compensation system. Face confidence is diagnostic,
+    not itself a current tracking gate.
+    - The setup page's pre-start checklist displays pose readiness, but the
+    enabled-start condition checks camera, face, and calibration. Active test
+    tracking applies the pose gate when pose data is present.
+    - Screen calibration can become stale after changing monitor, OS scaling, or
+    browser zoom. Recalibrate after such changes.
+    - Browser CSS pixel measurements and physical ruler measurements are a manual
+    calibration process and can introduce human error.
+    - Validation records currently use the fixed session ID "validation-session";
+    the page loads all records under that ID as one validation set.
+    - MediaPipe inference and CDN availability/performance depend on browser,
+    device, network, WebGL/GPU support, and permissions.
+    - The service worker precaches the app shell. The PWA config intentionally
+    does not aggressively cache the large runtime CDN model/WASM resources.
+    - The staircase is a simple 1-up/1-down procedure, not QUEST/PEST or another
+    validated clinical psychophysical method.
+    - A passing validation point only means that point's absolute distance error
+    is at or below the configured threshold. It does not certify the system.
+    - No real monocular depth AI model or model comparison result is included.
+
+
+    12. GUIDANCE FOR A FOLLOW-ON CODING ASSISTANT
+    ---------------------------------------------
+    When taking on a task in this repository:
+    1. Read the specific page/component and the lower-level module that owns the
+    behavior. Vision flow is centralized in VisionContext; geometry is in
+    vision/math modules; calibration persistence is in calibrationStorage.
+    2. Preserve unit consistency, especially meters versus millimeters and CSS
+    pixels versus physical screen dimensions.
+    3. Do not describe calibration, validation, or acuity output as clinically
+    proven. Do not fabricate distance, validation, or depth-model outputs.
+    4. Keep browser video local and avoid persisting frames or images.
+    5. Add or update focused Vitest coverage for changed pure logic. For UI or
+    browser behavior, use an appropriate integration/manual check in addition
+    to unit tests where feasible.
+    6. Keep edits focused and follow existing React/TypeScript patterns and the
+    current centralized configuration approach.
+    7. Run npm run test and npm run build for meaningful behavior/type changes;
+    use npm run lint when relevant.
+
+    END OF HANDOFF

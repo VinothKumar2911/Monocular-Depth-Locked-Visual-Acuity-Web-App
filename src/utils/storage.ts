@@ -28,6 +28,8 @@ export interface TrialRecord {
   logMAR: number;
 }
 
+import type { TemporalDistanceSample } from "../vision/distanceSmoothing";
+
 export interface ValidationRecord {
   id?: number;
   sessionId: string;
@@ -44,7 +46,9 @@ export interface ValidationRecord {
   renderedOptotypePX: number;
   measuredOptotypeMM: number | null;
   passFail: "PASS" | "FAIL";
+  temporalSamples?: TemporalDistanceSample[];
 }
+
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 

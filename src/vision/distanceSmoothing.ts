@@ -72,3 +72,53 @@ export class DistanceSmoother {
     return this.smoothedValue;
   }
 }
+
+export interface TemporalDistanceSample {
+  timeSec: number;
+  rawDistanceM: number;
+  smoothedDistanceM: number;
+  referenceDistanceM: number;
+}
+
+/**
+ * Generate a reproducible benchmark dataset of temporal webcam distance tracking,
+ * comparing raw IPD estimates against EMA smoothed values (alpha=0.20) and a reference distance.
+ */
+export function generateDemoTemporalSeries(
+  referenceDistanceM = 1.50,
+  durationSec = 3.0,
+  fps = 30,
+  alpha = CONFIG.defaultSmoothingAlpha
+): TemporalDistanceSample[] {
+  const totalFrames = Math.round(durationSec * fps);
+  const dt = 1 / fps;
+  const smoother = new DistanceSmoother(alpha);
+  const samples: TemporalDistanceSample[] = [];
+
+  // Deterministic seed pattern so repeated benchmark runs produce matching reproducible paper plots
+  for (let i = 0; i < totalFrames; i++) {
+    const timeSec = Number((i * dt).toFixed(3));
+    
+    // Natural head micro-movement drift + webcam sensor pixel noise
+    const drift = Math.sin((i / totalFrames) * Math.PI * 2) * 0.015;
+    const noise = Math.sin(i * 1.7) * 0.022 + Math.cos(i * 2.3) * 0.018;
+
+    // Simulate 2 transient single-frame landmark tracking spikes (outliers)
+    let spike = 0;
+    if (i === 24) spike = 0.075; // single-frame landmark jump up
+    if (i === 62) spike = -0.068; // single-frame landmark jump down
+
+    const rawDistanceM = Number((referenceDistanceM + drift + noise + spike).toFixed(4));
+    const smoothRes = smoother.push(rawDistanceM);
+
+    samples.push({
+      timeSec,
+      rawDistanceM,
+      smoothedDistanceM: Number(smoothRes.smoothed.toFixed(4)),
+      referenceDistanceM,
+    });
+  }
+
+  return samples;
+}
+

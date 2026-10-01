@@ -9,6 +9,8 @@ import { CONFIG } from "../config";
 import { saveValidationRecord, getValidationRecords, type ValidationRecord } from "../utils/storage";
 import { downloadCSV, downloadJSON } from "../utils/csvExport";
 import TumblingE from "../components/TumblingE";
+import DistanceSmoothingChart from "../components/DistanceSmoothingChart";
+import { generateDemoTemporalSeries, type TemporalDistanceSample } from "../vision/distanceSmoothing";
 
 const SESSION_ID = "validation-session";
 const SAMPLE_DURATION_MS = 3000;
@@ -22,7 +24,10 @@ export default function Validation() {
   const [sampling, setSampling] = useState(false);
   const [records, setRecords] = useState<ValidationRecord[]>([]);
   const samplesRef = useRef<number[]>([]);
+  const temporalSamplesRef = useRef<TemporalDistanceSample[]>([]);
+  const samplingStartMsRef = useRef<number>(0);
   const [measuredOptotypeMM, setMeasuredOptotypeMM] = useState<string>("");
+  const [chartMode, setChartMode] = useState<"recorded" | "benchmark">("recorded");
 
   useEffect(() => {
     if (cameraStatus === "idle" && !autoStartRequestedRef.current) {
@@ -40,10 +45,22 @@ export default function Validation() {
     if (tracking.smoothedDistanceM !== null) {
       samplesRef.current.push(tracking.smoothedDistanceM);
     }
-  }, [sampling, tracking.smoothedDistanceM]);
+    if (tracking.rawDistanceM !== null && tracking.smoothedDistanceM !== null) {
+      const now = performance.now();
+      const elapsedSec = (now - samplingStartMsRef.current) / 1000;
+      temporalSamplesRef.current.push({
+        timeSec: Number(elapsedSec.toFixed(3)),
+        rawDistanceM: tracking.rawDistanceM,
+        smoothedDistanceM: tracking.smoothedDistanceM,
+        referenceDistanceM: actualDistanceInput,
+      });
+    }
+  }, [sampling, tracking.smoothedDistanceM, tracking.rawDistanceM, actualDistanceInput]);
 
   const runSample = () => {
     samplesRef.current = [];
+    temporalSamplesRef.current = [];
+    samplingStartMsRef.current = performance.now();
     setSampling(true);
     setTimeout(async () => {
       setSampling(false);
@@ -73,6 +90,7 @@ export default function Validation() {
         renderedOptotypePX: renderedPX,
         measuredOptotypeMM: measuredOptotypeMM ? Number(measuredOptotypeMM) : null,
         passFail: errM <= CONFIG.targetDistanceToleranceM ? "PASS" : "FAIL",
+        temporalSamples: [...temporalSamplesRef.current],
       };
       await saveValidationRecord(record);
       const all = await getValidationRecords(SESSION_ID);
@@ -80,6 +98,7 @@ export default function Validation() {
       setMeasuredOptotypeMM("");
     }, SAMPLE_DURATION_MS);
   };
+
 
   const estimatedList = records.map((r) => r.estimatedDistanceM);
   const actualList = records.map((r) => r.actualDistanceM);
@@ -313,6 +332,54 @@ export default function Validation() {
           </>
         )}
       </div>
+
+      <div className="card">
+        <div className="flex-between">
+          <h3>5. Temporal Distance Estimation &amp; EMA Smoothing</h3>
+          <div className="btn-row">
+            <button
+              className={`btn btn-sm ${chartMode === "recorded" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setChartMode("recorded")}
+            >
+              Latest Recorded Run
+            </button>
+            <button
+              className={`btn btn-sm ${chartMode === "benchmark" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setChartMode("benchmark")}
+            >
+              Benchmark Pipeline Dataset (α=0.2)
+            </button>
+          </div>
+        </div>
+
+        <p className="muted small">
+          Demonstrates how per-frame webcam IPD distance noise (raw distance $D_t$) is filtered by outlier rejection and
+          Exponential Moving Average ($D_t^{"{EMA}"} = \alpha D_t + (1-\alpha) D_{"{t-1}"}^{"{EMA}"}$, $\alpha = {CONFIG.defaultSmoothingAlpha}$).
+        </p>
+
+        {chartMode === "recorded" ? (
+          latestRecord?.temporalSamples && latestRecord.temporalSamples.length > 0 ? (
+            <DistanceSmoothingChart
+              samples={latestRecord.temporalSamples}
+              title="Temporal Distance Estimation and EMA Smoothing (Recorded Webcam)"
+              referenceDistanceM={latestRecord.actualDistanceM}
+            />
+          ) : (
+            <div style={{ marginTop: 16, padding: 16, background: "var(--surface-alt)", borderRadius: 8 }}>
+              <p className="muted small" style={{ margin: 0 }}>
+                No recorded temporal frames found for the latest validation point. Click <strong>"Record 3s of Measurements"</strong> above with webcam active, or switch to <strong>"Benchmark Pipeline Dataset"</strong> to generate figure <code>distance_smoothing.png</code> instantly.
+              </p>
+            </div>
+          )
+        ) : (
+          <DistanceSmoothingChart
+            samples={generateDemoTemporalSeries(actualDistanceInput, 3.0, 30, CONFIG.defaultSmoothingAlpha)}
+            title="Temporal Distance Estimation and EMA Smoothing"
+            referenceDistanceM={actualDistanceInput}
+          />
+        )}
+      </div>
     </div>
   );
 }
+

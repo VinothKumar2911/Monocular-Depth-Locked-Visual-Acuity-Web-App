@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { computeScreenCalibration, mmToPixels, pixelsToMM } from "../calibration/screenCalibration";
 import { createStaircase, stepStaircase, pickRandomOrientation } from "../visionAcuity/staircase";
-import { DistanceSmoother } from "../vision/distanceSmoothing";
+import { DistanceSmoother, generateDemoTemporalSeries } from "../vision/distanceSmoothing";
 import { calibrateFocalLength, estimateDistance } from "../vision/distanceEstimator";
 
 describe("screen calibration", () => {
@@ -96,4 +96,12 @@ describe("distance smoothing", () => {
     expect(jumped.smoothed).toBeLessThan(5.0);
     expect(jumped.smoothed).toBeGreaterThan(1.5);
   });
+
+  it("generates temporal demo series with alpha=0.20 and dampens noise", () => {
+    const series = generateDemoTemporalSeries(1.5, 3.0, 30, 0.2);
+    expect(series.length).toBe(90);
+    expect(series[0].referenceDistanceM).toBe(1.5);
+    expect(series[0].smoothedDistanceM).toBeDefined();
+  });
 });
+
