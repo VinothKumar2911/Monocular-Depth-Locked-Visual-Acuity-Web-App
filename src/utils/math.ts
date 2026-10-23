@@ -70,14 +70,76 @@ export function mean(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-export function variance(values: number[]): number {
+/**
+ * Population variance: (1 / N) * sum((x_i - mean)^2)
+ * Division by N. Returns NaN for empty arrays.
+ */
+export function populationVariance(values: number[]): number {
   if (values.length === 0) return NaN;
   const m = mean(values);
   return mean(values.map((v) => (v - m) ** 2));
 }
 
-export function stdDev(values: number[]): number {
-  return Math.sqrt(variance(values));
+/**
+ * Sample variance with Bessel's correction: (1 / (N - 1)) * sum((x_i - mean)^2)
+ * Unbiased estimator for sample variance.
+ * Returns NaN for empty array, 0 for single-element array (no variation).
+ */
+export function sampleVariance(values: number[]): number {
+  if (values.length === 0) return NaN;
+  if (values.length === 1) return 0;
+  const m = mean(values);
+  const sumSq = values.reduce((acc, v) => acc + (v - m) ** 2, 0);
+  return sumSq / (values.length - 1);
+}
+
+/** Backwards-compatible alias for populationVariance */
+export function variance(values: number[]): number {
+  return populationVariance(values);
+}
+
+/**
+ * Population standard deviation: sqrt(populationVariance)
+ * Formula: sigma = sqrt((1 / N) * sum((x_i - mu)^2))
+ */
+export function populationStdDev(values: number[]): number {
+  return Math.sqrt(populationVariance(values));
+}
+
+/**
+ * Sample standard deviation with Bessel's correction: sqrt(sampleVariance)
+ * Formula: s = sqrt((1 / (N - 1)) * sum((x_i - x_bar)^2))
+ * Standard convention for finite continuous time-series samples.
+ */
+export function sampleStdDev(values: number[]): number {
+  return Math.sqrt(sampleVariance(values));
+}
+
+/**
+ * Calculate standard deviation with configurable convention.
+ * @param values Array of numbers
+ * @param isSample If true, uses sample SD (s, N-1); if false, uses population SD (sigma, N). Default is false for backwards compatibility.
+ */
+export function stdDev(values: number[], isSample = false): number {
+  return isSample ? sampleStdDev(values) : populationStdDev(values);
+}
+
+/**
+ * Noise reduction percentage: ((raw SD - smoothed SD) / raw SD) * 100
+ * Safely handles zero raw SD, non-finite values, and negative cases (noise inflation).
+ * Returns null if raw SD <= 0 or if values are invalid (undefined / not applicable).
+ * If clampNegative is false (default), preserves negative percentages indicating noise inflation.
+ */
+export function calculateNoiseReduction(
+  rawSd: number,
+  smoothedSd: number,
+  clampNegative = false
+): number | null {
+  if (!Number.isFinite(rawSd) || !Number.isFinite(smoothedSd) || rawSd <= 0) {
+    return null;
+  }
+  const reduction = ((rawSd - smoothedSd) / rawSd) * 100;
+  return clampNegative ? Math.max(0, reduction) : reduction;
 }
 
 export function median(values: number[]): number {

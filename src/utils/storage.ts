@@ -11,7 +11,7 @@
 import { openDB, type IDBPDatabase } from "idb";
 
 const DB_NAME = "monocular-depth-va";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface TrialRecord {
   id?: number;
@@ -33,6 +33,9 @@ import type { TemporalDistanceSample } from "../vision/distanceSmoothing";
 export interface ValidationRecord {
   id?: number;
   sessionId: string;
+  participantId?: string; // Standardized participant ID (e.g. "P01".."P13")
+  repetition?: number; // Repetition sequence number (e.g. 1, 2, 3)
+  referenceDistanceUnit?: string; // Measurement unit (default "m")
   timestamp: string;
   actualDistanceM: number;
   estimatedDistanceM: number;
@@ -47,15 +50,33 @@ export interface ValidationRecord {
   measuredOptotypeMM: number | null;
   passFail: "PASS" | "FAIL";
   temporalSamples?: TemporalDistanceSample[];
+  dataSource?: "RECORDED" | "SIMULATED";
+  // Protocol & execution metadata
+  emaAlpha?: number;
+  cameraStatus?: string;
+  durationSec?: number;
+  sampleCount?: number;
+  droppedSamplesCount?: number;
+  // Precomputed recording stability statistics
+  rawSdM?: number;
+  smoothedSdM?: number;
+  rawSdCm?: number;
+  smoothedSdCm?: number;
+  noiseReductionPct?: number | null;
+  meanRawDistanceM?: number;
+  meanRawErrorM?: number;
+  meanEmaErrorM?: number;
+  maxAbsoluteErrorM?: number;
+  trackingFailures?: number;
+  recordingStatus?: "VALID" | "INSUFFICIENT_SAMPLES" | "TRACKING_LOST" | "CANCELLED";
 }
-
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
+      upgrade(db, oldVersion, _newVersion, transaction) {
         if (!db.objectStoreNames.contains("trials")) {
           const store = db.createObjectStore("trials", { keyPath: "id", autoIncrement: true });
           store.createIndex("sessionId", "sessionId");
@@ -63,6 +84,17 @@ function getDB(): Promise<IDBPDatabase> {
         if (!db.objectStoreNames.contains("validation")) {
           const store = db.createObjectStore("validation", { keyPath: "id", autoIncrement: true });
           store.createIndex("sessionId", "sessionId");
+          store.createIndex("participantId", "participantId");
+          store.createIndex("dataSource", "dataSource");
+        } else {
+          // Safe migration from v1 to v2: add indexes to existing validation store
+          const store = transaction.objectStore("validation");
+          if (!store.indexNames.contains("participantId")) {
+            store.createIndex("participantId", "participantId");
+          }
+          if (!store.indexNames.contains("dataSource")) {
+            store.createIndex("dataSource", "dataSource");
+          }
         }
       },
     });
@@ -92,6 +124,26 @@ export async function getValidationRecords(sessionId?: string): Promise<Validati
     return (await db.getAllFromIndex("validation", "sessionId", sessionId)) as ValidationRecord[];
   }
   return (await db.getAll("validation")) as ValidationRecord[];
+}
+
+export async function getRealValidationRecords(): Promise<ValidationRecord[]> {
+  const all = await getValidationRecords();
+  return all.filter((r) => r.dataSource === "RECORDED");
+}
+
+export async function getValidationRecordsByParticipant(participantId: string): Promise<ValidationRecord[]> {
+  const all = await getRealValidationRecords();
+  return all.filter((r) => r.participantId === participantId);
+}
+
+export async function deleteValidationRecord(id: number): Promise<void> {
+  const db = await getDB();
+  await db.delete("validation", id);
+}
+
+export async function clearValidationRecords(): Promise<void> {
+  const db = await getDB();
+  await db.clear("validation");
 }
 
 export async function clearAllData(): Promise<void> {

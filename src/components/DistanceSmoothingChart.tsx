@@ -264,7 +264,12 @@ export default function DistanceSmoothingChart({
         (Math.abs(s.smoothedDistanceM - s.referenceDistanceM) * 100).toFixed(2)
       ),
     }));
-    downloadCSV("distance_smoothing_data.csv", exportRows);
+    downloadCSV("distance_smoothing_data.csv", exportRows, undefined, {
+      "Data Source": "TEMPORAL_DISTANCE_TRACKING",
+      "Smoothing Alpha": CONFIG.defaultSmoothingAlpha,
+      "Sample Count": samples.length,
+      "Export Timestamp": new Date().toISOString(),
+    });
   };
 
   return (

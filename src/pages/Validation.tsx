@@ -11,6 +11,7 @@ import { downloadCSV, downloadJSON } from "../utils/csvExport";
 import TumblingE from "../components/TumblingE";
 import DistanceSmoothingChart from "../components/DistanceSmoothingChart";
 import { generateDemoTemporalSeries, type TemporalDistanceSample } from "../vision/distanceSmoothing";
+import EmaStabilityAnalysisSection from "../components/EmaStabilityAnalysisSection";
 
 const SESSION_ID = "validation-session";
 const SAMPLE_DURATION_MS = 3000;
@@ -90,6 +91,7 @@ export default function Validation() {
         measuredOptotypeMM: measuredOptotypeMM ? Number(measuredOptotypeMM) : null,
         passFail: errM <= CONFIG.targetDistanceToleranceM ? "PASS" : "FAIL",
         temporalSamples: [...temporalSamplesRef.current],
+        dataSource: "RECORDED",
       };
       await saveValidationRecord(record);
       const all = await getValidationRecords(SESSION_ID);
@@ -260,18 +262,65 @@ export default function Validation() {
 
       <div className="card">
         <div className="flex-between">
-          <h3>4. Summary</h3>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h3 style={{ margin: 0 }}>4. Summary</h3>
+              <span className="badge neutral" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                <span className="dot" style={{ background: "var(--good)" }} />
+                Data Source: Recorded Observations
+              </span>
+            </div>
+            <p className="muted small" style={{ margin: "4px 0 0 0" }}>
+              Summary: Analyzing {records.length} recorded distance measurement(s) from live webcam validation.
+            </p>
+          </div>
           <div className="btn-row">
-            <button className="btn btn-secondary" onClick={() => downloadCSV("validation-report.csv", records)}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                const rows = records.map((r, i) => ({
+                  measurement_id: `M${String(i + 1).padStart(2, "0")}`,
+                  data_source: r.dataSource ?? "RECORDED",
+                  timestamp: r.timestamp,
+                  actual_distance_m: r.actualDistanceM.toFixed(2),
+                  estimated_distance_m: r.estimatedDistanceM.toFixed(3),
+                  absolute_error_cm: (r.absoluteErrorM * 100).toFixed(2),
+                  percentage_error_pct: r.percentageError.toFixed(2),
+                  status: r.passFail,
+                  confidence: Number.isFinite(r.confidence) ? r.confidence.toFixed(2) : "",
+                  head_yaw_deg: Number.isFinite(r.headYawDeg) ? r.headYawDeg.toFixed(1) : "",
+                  head_pitch_deg: Number.isFinite(r.headPitchDeg) ? r.headPitchDeg.toFixed(1) : "",
+                  target_optotype_mm: r.targetOptotypeMM.toFixed(2),
+                  measured_optotype_mm: r.measuredOptotypeMM !== null ? r.measuredOptotypeMM.toFixed(2) : "",
+                }));
+                downloadCSV("validation-report.csv", rows, undefined, {
+                  "Data Source": "RECORDED_OBSERVATION",
+                  "Session ID": SESSION_ID,
+                  "Export Timestamp": new Date().toISOString(),
+                  "Distance Tolerance Target": `±${CONFIG.targetDistanceToleranceM * 100} cm`,
+                  "Record Count": records.length,
+                });
+              }}
+            >
               Download CSV
             </button>
-            <button className="btn btn-secondary" onClick={() => downloadJSON("validation-report.json", records)}>
+            <button
+              className="btn btn-secondary"
+              onClick={() =>
+                downloadJSON("validation-report.json", records, {
+                  dataSource: "RECORDED_OBSERVATION",
+                  sessionId: SESSION_ID,
+                  toleranceTargetM: CONFIG.targetDistanceToleranceM,
+                  recordCount: records.length,
+                })
+              }
+            >
               Download JSON
             </button>
           </div>
         </div>
 
-        <div className="card-grid">
+        <div className="card-grid" style={{ marginTop: 16 }}>
           <div className="stat-card">
             <div className="stat-label">Number of measurements</div>
             <div className="stat-value">{records.length}</div>
@@ -295,10 +344,10 @@ export default function Validation() {
         </div>
 
         {records.length === 0 ? (
-          <p className="muted small">No validation points recorded yet.</p>
+          <p className="muted small" style={{ marginTop: 16 }}>No validation points recorded yet.</p>
         ) : (
           <>
-            <table className="data-table">
+            <table className="data-table" style={{ marginTop: 16 }}>
               <thead>
                 <tr>
                   <th>Actual</th>
@@ -334,7 +383,20 @@ export default function Validation() {
 
       <div className="card">
         <div className="flex-between">
-          <h3>5. Temporal Distance Estimation &amp; EMA Smoothing</h3>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h3 style={{ margin: 0 }}>5. Temporal Distance Estimation &amp; EMA Smoothing</h3>
+              <span className="badge neutral" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                <span className="dot" style={{ background: chartMode === "recorded" ? "var(--good)" : "var(--accent)" }} />
+                Data Source: {chartMode === "recorded" ? "Recorded Measurement" : "Synthetic Test Sequence"}
+              </span>
+            </div>
+            <p className="muted small" style={{ margin: "4px 0 0 0" }}>
+              Summary: {chartMode === "recorded"
+                ? "Analyzing latest 3-second recorded webcam tracking sequence."
+                : "Analyzing generated benchmark distance sequence (α=0.20)."}
+            </p>
+          </div>
           <div className="btn-row">
             <button
               className={`btn btn-sm ${chartMode === "recorded" ? "btn-primary" : "btn-secondary"}`}
@@ -351,7 +413,7 @@ export default function Validation() {
           </div>
         </div>
 
-        <p className="muted small">
+        <p className="muted small" style={{ marginTop: 10 }}>
           Demonstrates how per-frame webcam IPD distance noise (raw distance $D_t$) is filtered by outlier rejection and
           Exponential Moving Average ($D_t^{"{EMA}"} = \alpha D_t + (1-\alpha) D_{"{t-1}"}^{"{EMA}"}$, $\alpha = {CONFIG.defaultSmoothingAlpha}$).
         </p>
@@ -378,6 +440,9 @@ export default function Validation() {
           />
         )}
       </div>
+
+      {/* 6. Research & Parameter Analysis Section */}
+      <EmaStabilityAnalysisSection realRecords={records} />
     </div>
   );
 }
