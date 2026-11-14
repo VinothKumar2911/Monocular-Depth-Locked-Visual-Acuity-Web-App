@@ -13,18 +13,20 @@ import {
 import { CONFIG } from "../config";
 import type { TemporalDistanceSample } from "../vision/distanceSmoothing";
 import { downloadCSV } from "../utils/csvExport";
-import { stdDev } from "../utils/math";
+import { calculateNoiseReduction, sampleStdDev } from "../utils/math";
 
 interface DistanceSmoothingChartProps {
   samples: TemporalDistanceSample[];
   title?: string;
   referenceDistanceM?: number;
+  alpha?: number;
 }
 
 export default function DistanceSmoothingChart({
   samples,
   title = "Temporal Distance Estimation and EMA Smoothing",
   referenceDistanceM,
+  alpha = CONFIG.defaultSmoothingAlpha,
 }: DistanceSmoothingChartProps) {
   const [showTable, setShowTable] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -40,10 +42,9 @@ export default function DistanceSmoothingChart({
   // Calculate stats
   const rawValues = samples.map((s) => s.rawDistanceM);
   const smoothedValues = samples.map((s) => s.smoothedDistanceM);
-  const rawStdDevM = stdDev(rawValues);
-  const smoothedStdDevM = stdDev(smoothedValues);
-  const noiseReductionPct =
-    rawStdDevM > 0 ? Math.max(0, ((rawStdDevM - smoothedStdDevM) / rawStdDevM) * 100) : 0;
+  const rawStdDevM = sampleStdDev(rawValues);
+  const smoothedStdDevM = sampleStdDev(smoothedValues);
+  const noiseReductionPct = calculateNoiseReduction(rawStdDevM, smoothedStdDevM);
 
   const refDist = referenceDistanceM ?? samples[0]?.referenceDistanceM ?? 1.5;
 
@@ -78,7 +79,7 @@ export default function DistanceSmoothingChart({
     ctx.fillStyle = "#94a3b8";
     ctx.font = "24px sans-serif";
     ctx.fillText(
-      `EMA Smoothing Pipeline (α = ${CONFIG.defaultSmoothingAlpha})  |  D_t^{EMA} = α·D_t + (1-α)·D_{t-1}^{EMA}`,
+      `EMA Smoothing Pipeline (α = ${alpha})  |  D_t^{EMA} = α·D_t + (1-α)·D_{t-1}^{EMA}`,
       80,
       155
     );
@@ -221,7 +222,7 @@ export default function DistanceSmoothingChart({
     ctx.lineTo(legX + 35, legY + 65);
     ctx.stroke();
     ctx.fillStyle = "#f1f5f9";
-    ctx.fillText(`Smoothed distance (EMA α=${CONFIG.defaultSmoothingAlpha})`, legX + 45, legY + 71);
+    ctx.fillText(`Smoothed distance (EMA α=${alpha})`, legX + 45, legY + 71);
 
     // Legend Item 3: Reference distance
     ctx.strokeStyle = "#f59e0b";
@@ -266,7 +267,7 @@ export default function DistanceSmoothingChart({
     }));
     downloadCSV("distance_smoothing_data.csv", exportRows, undefined, {
       "Data Source": "TEMPORAL_DISTANCE_TRACKING",
-      "Smoothing Alpha": CONFIG.defaultSmoothingAlpha,
+      "Smoothing Alpha": alpha,
       "Sample Count": samples.length,
       "Export Timestamp": new Date().toISOString(),
     });
@@ -285,7 +286,7 @@ export default function DistanceSmoothingChart({
             <code>
               D_t^{"{EMA}"} = \alpha D_t + (1-\alpha)D_t-1^{"{EMA}"}
             </code>{" "}
-            with <strong>&alpha; = {CONFIG.defaultSmoothingAlpha}</strong>)
+            with <strong>&alpha; = {alpha}</strong>)
           </p>
         </div>
         <div className="btn-row">
@@ -302,7 +303,7 @@ export default function DistanceSmoothingChart({
       <div className="card-grid" style={{ marginBottom: 16 }}>
         <div className="stat-card" style={{ padding: 12 }}>
           <div className="stat-label">Smoothing Alpha (&alpha;)</div>
-          <div className="stat-value">{CONFIG.defaultSmoothingAlpha}</div>
+          <div className="stat-value">{alpha}</div>
         </div>
         <div className="stat-card" style={{ padding: 12 }}>
           <div className="stat-label">Raw Noise StdDev</div>
@@ -315,7 +316,7 @@ export default function DistanceSmoothingChart({
         <div className="stat-card" style={{ padding: 12 }}>
           <div className="stat-label">Noise Dampening</div>
           <div className="stat-value" style={{ color: "var(--good)" }}>
-            {noiseReductionPct.toFixed(1)}%
+            {noiseReductionPct === null ? "N/A (zero raw SD)" : `${noiseReductionPct.toFixed(1)}%`}
           </div>
         </div>
       </div>

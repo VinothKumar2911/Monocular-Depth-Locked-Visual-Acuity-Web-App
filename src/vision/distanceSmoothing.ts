@@ -75,9 +75,14 @@ export class DistanceSmoother {
 
 export interface TemporalDistanceSample {
   timeSec: number;
+  timestamp?: string;
   rawDistanceM: number;
   smoothedDistanceM: number;
   referenceDistanceM: number;
+  ipdPixels?: number;
+  confidence?: number;
+  headYawDeg?: number;
+  headPitchDeg?: number;
 }
 
 /**
@@ -121,4 +126,3 @@ export function generateDemoTemporalSeries(
 
   return samples;
 }
-

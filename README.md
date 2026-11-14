@@ -286,31 +286,23 @@ A simple 1-up/1-down adaptive logMAR staircase (`src/visionAcuity/staircase.ts`)
 This is intentionally a simple procedure appropriate for a prototype — **not** a validated clinical staircase
 (PEST/QUEST) — and is always labeled **"Experimental visual-acuity estimate"** in the UI.
 
+The six-reversal setting is a pragmatic prototype stopping rule: it waits for repeated response-direction changes while limiting test duration, with a separate 40-trial cap. It is not established here as an optimal or clinically validated reversal count. The implementation's score averages the last six sequential trials, not the six reversal-point values; any IEEE proposal should state this distinction and treat the setting as a protocol choice pending comparative validation.
+
 ## Validation Procedure
 
-The Validation / Research Mode page lets you:
-1. Enter the actual distance you measured with a tape measure or laser distance meter.
-2. Sit at that distance and record ~3 seconds of live distance estimates.
-3. The app computes the mean estimate, absolute error, and percentage error for that point, and marks
-   PASS/FAIL against the configurable ±3cm target (`CONFIG.targetDistanceToleranceM`).
-4. Repeat at multiple distances (defaults suggested: 1.50m, 2.20m, 3.00m) to build a validation table.
-5. Optionally enter a caliper/ruler-measured physical optotype size to cross-check the rendered-size math.
-6. Export the full validation log as CSV or JSON.
+The Validation / Research Mode compares a measured physical reference distance with the mean EMA distance from a three-second webcam recording. Enter a positive reference distance in meters, keep the participant tracked, and select **Record 3 seconds**. The **Recorded distance results — additional recordings** table, its summary statistics, and its CSV/JSON downloads include only eligible real recordings that have no participant ID. PO1–PO13 results are kept in their own participant table below the EMA analysis. Records with unsupported participant IDs or unknown provenance are shown separately for review and excluded from cohort calculations and additional-record exports. The physical reference is retained as ground truth and is never replaced by the webcam estimate.
 
-**No validation numbers are ever hard-coded or fabricated.** If your setup can't hit +/-3cm — which is a
-genuinely stringent target, especially at 3m — the app will show FAIL and say so. That is itself a valid,
-useful research result.
+The page also displays raw-versus-EMA temporal charts and stability metrics from eligible saved real recordings. Its participant table always lists PO1–PO13; participants without eligible records show as awaiting data and do not contribute to cohort statistics. Legacy P01–P13 identifiers are recognized as PO1–PO13. Participant-level averages and exploratory quartile bands for raw SD, EMA SD, and noise reduction are descriptive pilot summaries, not prevalidated pass/fail cutoffs. Existing numerical records remain in IndexedDB; webcam images and video are not stored. The application is an engineering research prototype, not a clinically certified visual-acuity assessment.
 
 ## Metrics
 
-Computed in `src/utils/math.ts` and displayed in Validation Mode:
+Distance error metrics displayed in Validation Mode are calculated over recorded three-second runs:
 
-- **Absolute Error:** `|estimated - actual|`
-- **Mean Absolute Error (MAE):** `mean(|estimated_i - actual_i|)`
-- **Root Mean Square Error (RMSE):** `sqrt(mean((estimated_i - actual_i)^2))`
-- **Percentage Error:** `|estimated - actual| / actual * 100`
-- **Max Error:** `max(|estimated_i - actual_i|)`
-- **Distance stability:** standard deviation of distance samples while stationary
+- Per-recording absolute error is `|mean EMA estimate - physical reference|`; percentage error divides by the positive reference distance and multiplies by 100.
+- MAE is the mean of recording-level absolute errors; RMSE is the square root of the mean squared signed recording-level errors. Maximum absolute error is reported separately.
+- Raw and EMA sample SD use Bessel's correction (N-1). Noise reduction is `((raw SD - EMA SD) / raw SD) * 100`; zero raw SD is not applicable and negative values indicate noise inflation.
+- For pilot bands, recordings are first averaged within each participant, then participant-level Q1, median, and Q3 are displayed. These exploratory bands should be checked against absolute error and validated in an independent, larger sample. They must not be presented as IEEE acceptance thresholds without prespecified criteria and independent validation.
+- The separate Simulation / Algorithm Testing component is not used in the Validation page or its results.
 
 ## Unit Tests
 

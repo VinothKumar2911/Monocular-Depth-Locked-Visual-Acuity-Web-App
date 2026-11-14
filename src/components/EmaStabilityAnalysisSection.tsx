@@ -51,7 +51,7 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
   );
 
   // Participant selection states (strictly independent per mode)
-  const [selectedRecordedId, setSelectedRecordedId] = useState<string>("Recorded-01");
+  const [selectedRecordedId, setSelectedRecordedId] = useState<string>("");
   const [selectedSequenceId, setSelectedSequenceId] = useState<string>("V05");
 
   // Parameter Comparison (Staircase Reversal Analysis) state
@@ -65,10 +65,10 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
   // 1. Measured Data: Real validation records with temporal samples
   const realStabilityMetrics = useMemo<EmaStabilityMetrics[]>(() => {
     return realRecords
-      .filter((r) => r.temporalSamples && r.temporalSamples.length > 0)
+      .filter((r) => r.dataSource === "RECORDED" && r.recordingStatus === "VALID" && r.temporalSamples && r.temporalSamples.length > 1)
       .map((r, idx) => {
         return computeEmaStabilityMetrics(r.temporalSamples!, {
-          participantId: `Recorded-${String(idx + 1).padStart(2, "0")}`,
+          participantId: `${r.participantId ?? "Unassigned"}-R${r.repetition ?? idx + 1}-S${idx + 1}`,
           dataSource: "REAL",
           referenceDistanceM: r.actualDistanceM,
           thresholds,
@@ -89,24 +89,18 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
 
   // Selected recorded time series
   const selectedRecordedTimeSeries = useMemo(() => {
-    const recordedIdx = realStabilityMetrics.findIndex((m) => m.participantId === selectedRecordedId);
-    if (recordedIdx !== -1) {
-      const realRec = realRecords.filter((r) => r.temporalSamples && r.temporalSamples.length > 0)[recordedIdx];
-      return {
-        id: realStabilityMetrics[recordedIdx].participantId,
-        samples: realRec.temporalSamples ?? [],
-        metrics: realStabilityMetrics[recordedIdx],
-      };
-    }
-    if (realStabilityMetrics.length > 0) {
-      const fallbackRec = realRecords.filter((r) => r.temporalSamples && r.temporalSamples.length > 0)[0];
-      return {
-        id: realStabilityMetrics[0].participantId,
-        samples: fallbackRec.temporalSamples ?? [],
-        metrics: realStabilityMetrics[0],
-      };
-    }
-    return null;
+    const selectedId = selectedRecordedId || realStabilityMetrics[0]?.participantId;
+    const recordedIdx = realStabilityMetrics.findIndex((m) => m.participantId === selectedId);
+    if (recordedIdx === -1) return null;
+    const realRec = realRecords.filter(
+      (record) => record.dataSource === "RECORDED" && record.recordingStatus === "VALID" && record.temporalSamples && record.temporalSamples.length > 1
+    )[recordedIdx];
+    if (!realRec) return null;
+    return {
+      id: realStabilityMetrics[recordedIdx].participantId,
+      samples: realRec.temporalSamples ?? [],
+      metrics: realStabilityMetrics[recordedIdx],
+    };
   }, [selectedRecordedId, realStabilityMetrics, realRecords]);
 
   // 2. Synthetic Sequences: Dynamically reclassified when thresholds change
@@ -180,7 +174,7 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
       reference_distance_m: m.referenceDistanceM.toFixed(2),
       raw_sd_cm: m.rawSdCm.toFixed(3),
       ema_sd_cm: m.smoothedSdCm.toFixed(3),
-      noise_reduction_pct: m.noiseReductionPct.toFixed(2),
+      noise_reduction_pct: m.noiseReductionPct === null ? "" : m.noiseReductionPct.toFixed(2),
       mean_raw_m: m.meanRawM.toFixed(4),
       mean_estimated_m: m.meanSmoothedM.toFixed(4),
       absolute_error_cm: m.absoluteErrorCm.toFixed(2),
@@ -225,7 +219,7 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
       reference_distance_m: m.referenceDistanceM.toFixed(2),
       raw_sd_cm: m.rawSdCm.toFixed(3),
       ema_sd_cm: m.smoothedSdCm.toFixed(3),
-      noise_reduction_pct: m.noiseReductionPct.toFixed(2),
+      noise_reduction_pct: m.noiseReductionPct === null ? "" : m.noiseReductionPct.toFixed(2),
       mean_raw_m: m.meanRawM.toFixed(4),
       mean_estimated_m: m.meanSmoothedM.toFixed(4),
       absolute_error_cm: m.absoluteErrorCm.toFixed(2),
@@ -303,7 +297,7 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
             className={`btn btn-sm ${activeMode === "stability" ? "btn-primary" : "btn-secondary"}`}
             onClick={() => setActiveMode("stability")}
           >
-            Stability Analysis
+            Simulation / Algorithm Testing
           </button>
           <button
             className={`btn btn-sm ${activeMode === "parameters" ? "btn-primary" : "btn-secondary"}`}
@@ -414,7 +408,9 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
                 <div className="stat-card">
                   <div className="stat-label">Median Noise Reduction</div>
                   <div className="stat-value" style={{ color: "var(--good)" }}>
-                    {realCohortSummary.medianNoiseReductionPct.toFixed(1)}%
+                    {realCohortSummary.medianNoiseReductionPct === null
+                      ? "N/A (zero raw SD)"
+                      : `${realCohortSummary.medianNoiseReductionPct.toFixed(1)}%`}
                   </div>
                 </div>
                 <div className="stat-card">
@@ -493,7 +489,9 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
                     <div>
                       <strong>Noise Reduction:</strong>{" "}
                       <span style={{ color: "var(--good)", fontWeight: 600 }}>
-                        {selectedRecordedTimeSeries.metrics.noiseReductionPct.toFixed(1)}%
+                        {selectedRecordedTimeSeries.metrics.noiseReductionPct === null
+                          ? "N/A (zero raw SD)"
+                          : `${selectedRecordedTimeSeries.metrics.noiseReductionPct.toFixed(1)}%`}
                       </span>
                     </div>
                     <div>
@@ -632,7 +630,9 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
                           <td>{m.referenceDistanceM.toFixed(2)} m</td>
                           <td>{m.rawSdCm.toFixed(2)}</td>
                           <td style={{ fontWeight: 600 }}>{m.smoothedSdCm.toFixed(2)}</td>
-                          <td style={{ color: "var(--good)", fontWeight: 600 }}>{m.noiseReductionPct.toFixed(1)}%</td>
+                          <td style={{ color: "var(--good)", fontWeight: 600 }}>
+                            {m.noiseReductionPct === null ? "N/A" : `${m.noiseReductionPct.toFixed(1)}%`}
+                          </td>
                           <td>{m.meanSmoothedM.toFixed(3)} m</td>
                           <td>{m.absoluteErrorCm.toFixed(1)} cm</td>
                           <td>
@@ -661,10 +661,12 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
       )}
 
       {/* ========================================================================= */}
-      {/* MODE 2: STABILITY ANALYSIS (Synthetic Test Sequences & Threshold Explorer) */}
+      {/* MODE 2: SIMULATION / ALGORITHM TESTING */}
       {/* ========================================================================= */}
       {activeMode === "stability" && (
         <div style={{ marginTop: 18 }}>
+          <h4>Simulation / Algorithm Testing</h4>
+          <p className="badge neutral">SIMULATED DATA — NOT EXPERIMENTAL EVIDENCE</p>
           {/* Subtle Status Indicator, Provenance Details & Generator Controls */}
           <div className="flex-between" style={{ marginBottom: 12 }}>
             <span className="badge neutral" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
@@ -859,7 +861,9 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
               <div className="stat-card">
                 <div className="stat-label">Median Noise Reduction</div>
                 <div className="stat-value" style={{ color: "var(--good)" }}>
-                  {syntheticCohortSummary.medianNoiseReductionPct.toFixed(1)}%
+                  {syntheticCohortSummary.medianNoiseReductionPct === null
+                    ? "N/A (zero raw SD)"
+                    : `${syntheticCohortSummary.medianNoiseReductionPct.toFixed(1)}%`}
                 </div>
               </div>
               <div className="stat-card">
@@ -939,7 +943,9 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
                 <div>
                   <strong>Noise Reduction:</strong>{" "}
                   <span style={{ color: "var(--good)", fontWeight: 600 }}>
-                    {selectedSequenceTimeSeries.metrics.noiseReductionPct.toFixed(1)}%
+                    {selectedSequenceTimeSeries.metrics.noiseReductionPct === null
+                      ? "N/A (zero raw SD)"
+                      : `${selectedSequenceTimeSeries.metrics.noiseReductionPct.toFixed(1)}%`}
                   </span>
                 </div>
                 <div>
@@ -1096,20 +1102,22 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
                   <BarChart data={simulatedMetrics} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="participantId" interval={0} fontSize={11} />
-                    <YAxis domain={[0, 100]} label={{ value: "Reduction %", angle: -90, position: "insideLeft", fontSize: 11 }} />
+                    <YAxis domain={["auto", "auto"]} label={{ value: "Reduction %", angle: -90, position: "insideLeft", fontSize: 11 }} />
                     <Tooltip formatter={(val) => [`${Number(val).toFixed(1)}%`, "Noise Reduction"]} />
                     <Legend verticalAlign="top" />
-                    <ReferenceLine
-                      y={syntheticCohortSummary.medianNoiseReductionPct}
-                      stroke="#10b981"
-                      strokeDasharray="4 4"
-                      label={{
-                        value: `Median: ${syntheticCohortSummary.medianNoiseReductionPct.toFixed(1)}%`,
-                        position: "top",
-                        fill: "#10b981",
-                        fontSize: 11,
-                      }}
-                    />
+                    {syntheticCohortSummary.medianNoiseReductionPct !== null && (
+                      <ReferenceLine
+                        y={syntheticCohortSummary.medianNoiseReductionPct}
+                        stroke="#10b981"
+                        strokeDasharray="4 4"
+                        label={{
+                          value: `Median: ${syntheticCohortSummary.medianNoiseReductionPct.toFixed(1)}%`,
+                          position: "top",
+                          fill: "#10b981",
+                          fontSize: 11,
+                        }}
+                      />
+                    )}
                     <Bar dataKey="noiseReductionPct" fill="#10b981" name="Noise Reduction %" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1156,7 +1164,9 @@ export default function EmaStabilityAnalysisSection({ realRecords }: EmaStabilit
                       <td>{m.referenceDistanceM.toFixed(2)} m</td>
                       <td>{m.rawSdCm.toFixed(2)}</td>
                       <td style={{ fontWeight: 600 }}>{m.smoothedSdCm.toFixed(2)}</td>
-                      <td style={{ color: "var(--good)", fontWeight: 600 }}>{m.noiseReductionPct.toFixed(1)}%</td>
+                      <td style={{ color: "var(--good)", fontWeight: 600 }}>
+                        {m.noiseReductionPct === null ? "N/A" : `${m.noiseReductionPct.toFixed(1)}%`}
+                      </td>
                       <td>{m.meanSmoothedM.toFixed(3)} m</td>
                       <td>{m.absoluteErrorCm.toFixed(1)} cm</td>
                       <td>

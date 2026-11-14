@@ -1,596 +1,348 @@
 PROJECT HANDOFF: MONOCULAR DEPTH-LOCKED VISUAL ACUITY
 =====================================================
 
-PURPOSE OF THIS FILE
---------------------
-This is an implementation-oriented briefing for an AI assistant (Claude or
-another coding assistant) that needs to understand this repository before
-making changes. It summarizes the product goal, current code architecture,
-end-to-end flow, formulas, dependencies, persistence, research modules,
-tests, and limitations. Treat source code as authoritative if anything
-here conflicts with the implementation.
+PURPOSE
+-------
+This file is the current implementation handoff for the repository. It
+describes the running application, especially the Validation page's real-data
+workflow and the proposed PO1-PO13 pilot analysis. Source code is authoritative
+if it differs from this document.
 
 
 1. PROJECT SUMMARY
 ------------------
-This repository is a browser-based research prototype for distance-adaptive
-visual acuity testing. It uses an ordinary webcam and face/iris landmarks to
-estimate how far the user's eyes are from the camera. It then dynamically changes
-the physical size of a vector Tumbling E so its visual angle remains tied to the
-chosen logMAR difficulty while the user changes distance.
+This browser-based research prototype estimates camera-to-eye distance from
+webcam face/iris landmarks using an IPD-based pinhole model. The estimated
+distance drives the physical size of a vector Tumbling E so its visual angle
+tracks the selected logMAR level.
 
-The intended experiment is to test whether an IPD-based pinhole camera model,
-with personal camera calibration and physical screen calibration, can support
-a useful visual-acuity workflow without a dedicated depth sensor (e.g., LiDAR,
-TrueDepth, or stereo cameras).
+The project is an engineering research prototype. It is not a clinical
+diagnostic device or a clinically validated visual-acuity assessment. Camera
+calibration and a measured physical screen calibration are important to the
+measurement workflow.
 
-In addition to the core test workflow, the application includes a comprehensive
-research validation and stability analysis suite. This allows researchers to:
-1. Compare webcam distance estimates against ground-truth tape/laser measurements.
-2. Record and inspect frame-by-frame raw vs. EMA-smoothed temporal distance tracking.
-3. Quantify distance jitter, sample standard deviation (Bessel's correction N-1),
-   and percentage noise reduction.
-4. Explore candidate stability thresholds across a 3-tier classification
-   (Stable, Moderate, Elevated Noise).
-5. Run reproducible, deterministic 10-virtual-participant simulations (V01-V10)
-   spanning 0.80 m to 2.50 m using the production DistanceSmoother pipeline.
-6. Evaluate adaptive staircase stopping rules (4, 6, 8, 10 reversals) via a 4-AFC
-   psychometric model, comparing Method 1 (sequential last-N trials) with Method 2
-   (reversal-point inflection vertices).
 
-This is a research prototype only. Its acuity result is experimental, not a
-clinical diagnosis or a replacement for a professional eye examination.
-
-
-2. WHAT IS IMPLEMENTED
-----------------------
-Core Optometric & Computer Vision Architecture:
-- React single-page application with Home, Camera Setup, Calibration, Test,
-  Results, Validation, and About routes.
-- Local webcam acquisition using getUserMedia (video only; no audio).
-- MediaPipe Face Landmarker inference in the browser, extracting 478 face and iris
-  landmarks and facial transformation matrices.
-- Eye landmark extraction and pixel interpupillary-distance (IPD) measurement.
-- Effective focal-length calibration from one or more known physical distances.
-- Distance calculation using the pinhole-camera relationship, followed by
-  moving-window diagnostics (15-frame rolling window, median filter, 4-sigma
-  outlier rejection) and exponential moving average (EMA) smoothing.
-- Head-pose estimation (yaw, pitch, roll) and automatic test pause for unacceptable
-  head pose or loss of reliable face tracking.
-- Manual physical screen calibration, converting CSS pixels to pixels/mm.
-- SVG-based geometric Tumbling E sizing and orientation selection.
-- 1-up/1-down logMAR staircase, response capture, results, plots, and exports.
-
-Research, Validation & Stability Analysis Suite (Section 4, 5 & 6 in Validation):
-- Validation recording workflow comparing webcam estimates with tape/laser distance.
-- Frame-by-frame temporal tracking sample capture (time t, raw distance D_t,
-  EMA distance D_t^EMA, reference distance D_ref).
-- Error metrics calculation: Absolute Error, Percentage Error, MAE, RMSE, Max Error.
-- Standard Deviation conventions: exact Population SD (N) and Sample SD (N-1
-  with Bessel's correction, standard for finite continuous time series).
-- Noise Reduction Percentage calculation: ((raw SD - EMA SD) / raw SD) * 100.
-- 3-tier Stability Threshold Explorer with dynamic category classification
-  (Stable <= 0.5 cm, Moderate <= 1.0 cm, Elevated Noise > 1.0 cm).
-- Reproducible Synthetic Participant Simulator (V01-V10) using Mulberry32 PRNG,
-  simulating postural sway drift, distance-dependent optical sensor noise, and
-  transient tracking spikes processed through the production DistanceSmoother.
-- Adaptive Staircase Reversal Analysis (4, 6, 8, 10 reversals) using a 4-AFC
-  psychometric function (chance rate gamma=0.25, lapse rate lambda=0.02, slope beta=8.0),
-  evaluating trial efficiency, completion rate, and comparing Method 1 (last-N trials)
-  vs. Method 2 (reversal points) scoring.
-- High-resolution paper figure generator (distance_smoothing.png) via HTML5 Canvas.
-- Structured CSV and JSON exports equipped with provenance metadata headers
-  (# Data Source, # Export Timestamp, # Parameters).
-- PWA installability and app-shell caching configuration.
-- Comprehensive Vitest unit tests (44 tests across 5 test suites).
-
-Important boundaries:
-- The primary distance estimator is geometric (pinhole camera + IPD). It is not
-  AI monocular depth inference.
-- src/vision/monocularDepth.ts is an unintegrated placeholder interface.
-- Synthetic participants (V01-V10) are computational simulations for parameter
-  exploration and are strictly segregated from real recorded participant data.
-- The +/-3 cm tolerance is a research benchmark, not a guaranteed accuracy.
-- The application does not provide clinically certified visual-acuity measurement.
-
-
-3. TECHNOLOGY
--------------
-Runtime dependencies (package.json):
-- React 19 and React DOM: UI rendering and state management.
-- TypeScript: application language, strict typing, and build validation.
-- Vite: development server and production bundler.
-- react-router-dom: HashRouter page navigation.
-- @mediapipe/tasks-vision: browser Face Landmarker and vision WASM runtime.
-- idb: IndexedDB wrapper for trial and validation records.
-- recharts: interactive graphs (dual-line charts, bar charts, custom reversal glyphs).
-- vite-plugin-pwa: service worker, installability, and app-shell precaching.
-
-Development and test tools:
-- Vitest and jsdom: unit tests for math, vision, staircase, smoothing, and simulations.
-- oxlint: high-performance linter.
-- TypeScript compiler (tsc -b): strict type validation.
-
-Vision Assets & Secure Context:
-The MediaPipe Face Landmarker WASM and task model are loaded from CDN URLs in
-src/vision/faceLandmarker.ts. They are not bundled into the app shell. The model
-runs in VIDEO mode with GPU delegate, tracking up to 2 faces with facial transform
-matrices. Webcam access requires a secure browser context (HTTPS or localhost).
-
-
-4. REPOSITORY MAP
------------------
-src/App.tsx
-Root React composition, HashRouter routes, route-level lazy loading,
-VisionProvider, navigation header, and footer.
-
-src/routePreload.ts
-Lazy import loaders shared with App.
-
-src/config.ts
-Central configuration for target visual angle, default IPD, camera request,
-smoothing alpha (default 0.2), head-pose bounds, resize threshold, staircase
-settings, and validation tolerance.
-
-src/context/VisionContext.tsx
-Owns the camera stream, MediaPipe per-frame requestAnimationFrame loop, tracking
-state, smoother instance, model loading/error state, and shared camera controls.
-Mounted above routes so tracking persists during navigation.
-
-src/vision/faceLandmarker.ts
-MediaPipe initialization, CDN asset URLs, model options, and video-frame
-inference wrapper.
-
-src/vision/eyeTracking.ts
-Converts normalized face landmarks to source-frame pixels, selects iris
-centers (468 and 473) or eye-corner fallback, computes pixel IPD, and assigns
-a heuristic confidence score.
-
-src/vision/headPose.ts
-Extracts yaw, pitch, and roll from MediaPipe's facial transform matrix and
-evaluates configured angular tolerances.
-
-src/vision/distanceEstimator.ts
-Converts pixel IPD and effective focal length to distance; solves focal
-length from known-distance calibration samples.
-
-src/vision/distanceSmoothing.ts
-DistanceSmoother class maintaining a 15-frame raw distance window, median
-filtering, 4-sigma outlier rejection, and exponential moving average (EMA).
-Also provides generateDemoTemporalSeries() for synthetic benchmark plots.
-
-src/vision/emaStabilityAnalysis.ts
-Quantitative stability analysis comparing raw vs. EMA distance jitter.
-Provides computeEmaStabilityMetrics(), categorizeStability(), calculateCohortSummary(),
-sample SD (Bessel's correction N-1), population SD, noise reduction percentage,
-and 3-tier classification (Stable, Moderate, Elevated Noise).
-
-src/vision/syntheticParticipantSimulator.ts
-Reproducible 10-virtual-participant simulator (V01-V10) spanning 0.80 m to 2.50 m.
-Uses deterministic Mulberry32 PRNG and Box-Muller Gaussian sampling to model
-postural sway drift (0.2-0.35 Hz), distance-scaling optical sensor noise, and
-transient tracking spikes. Feeds raw points into production DistanceSmoother.
-Strict data segregation: labeled "SIMULATED DATA", never stored in IndexedDB.
-
-src/vision/monocularDepth.ts
-Optional future comparison interface stub; no neural depth model is integrated.
-
-src/calibration/cameraCalibration.ts
-Calibration record types and multi-point focal-length averaging.
-
-src/calibration/screenCalibration.ts
-pixels/mm conversion and mm/pixel conversion helpers.
-
-src/calibration/calibrationStorage.ts
-localStorage save/load/clear operations for camera and screen calibrations.
-
-src/visionAcuity/visualAngle.ts
-Physical optotype height for target angle/logMAR and inverse angle check.
-
-src/visionAcuity/optotypeSizing.ts
-Combines physical height with screen calibration and provides a distance
-change threshold check.
-
-src/visionAcuity/staircase.ts
-Production staircase state, 1-up/1-down difficulty updates, reversal counting,
-termination, and randomized orientation with no immediate repeat.
-
-src/visionAcuity/scoring.ts
-Reduces trial history to displayed acuity estimate (average of last up to 6
-trials) and helpers for distance stability during testing.
-
-src/visionAcuity/staircaseReversalAnalysis.ts
-Experimental analysis of staircase stopping limits (4, 6, 8, 10 reversals)
-under a 40-trial cap using a 4-AFC psychometric response function (chance 0.25,
-lapse 0.02, slope 8.0). Compares Method 1 (last-N trials) with Method 2 (reversal
-points) across Monte Carlo iterations.
-
-src/utils/math.ts
-Pure math functions: mean, median, clamp, populationVariance, sampleVariance
-(Bessel's correction), populationStdDev, sampleStdDev, stdDev, calculateNoiseReduction,
-absoluteError, percentageError, MAE, RMSE, maxError.
-
-src/utils/storage.ts
-IndexedDB schema (monocular-depth-va, v1, stores: trials, validation) and
-record operations, plus shared localStorage JSON helpers. ValidationRecord includes
-temporalSamples and dataSource tag ("RECORDED").
-
-src/utils/csvExport.ts
-CSV/JSON serialization and browser file download helpers. Supports optional
-metadata headers (# Key: Value) in CSV and structured metadata wrappers in JSON.
-
-src/pages/
-- Home.tsx: Landing page with overview, requirements, and quick navigation.
-- CameraSetup.tsx: Camera permissions, preview, face tracking, and pose check.
-- Calibration.tsx: Two-stage calibration (Camera focal length and Screen px/mm).
-- VisualAcuityTest.tsx: Active test runner, full-screen adaptive Tumbling E,
-  live tracking gate, keyboard/touch directional responses, and staircase updates.
-- Results.tsx: Session summary, logMAR and Snellen score, trial table, staircase
-  trajectory chart, distance chart, and CSV/JSON export.
-- Validation.tsx: Ground-truth validation workflow, temporal tracking capture,
-  summary metrics, interactive smoothing charts, and research analysis suite.
-- About.tsx: Background, scientific methodology, math, and limitations.
-
-src/components/
-- CameraPreview.tsx: Video feed overlay with face bounding box and landmarks.
-- FaceStatus.tsx: Tracking readiness badges (face detected, pose ok, distance ok).
-- TumblingE.tsx: Pure SVG 5x5 grid optotype with 4 orientations.
-- DirectionButtons.tsx: 4-way response keypad matching optotype orientations.
-- DistanceDisplay.tsx: Formatted current distance and stability indicator.
-- CalibrationCard.tsx: Step-by-step focal length capture card.
-- DistanceSmoothingChart.tsx: Interactive Recharts graph of temporal tracking,
-  outlier highlighting, data table, CSV exporter, and distance_smoothing.png canvas
-  high-res figure generator.
-- EmaStabilityAnalysisSection.tsx: Tri-modal research dashboard (Participant Analysis,
-  Stability Analysis, Parameter Comparison) with threshold explorer, dual-line charts,
-  bar charts, and provenance-tagged data tables and exports.
-
-src/__tests__/
-- math.test.ts: Pure math, variances, standard deviations, and geometric calculations.
-- pipeline.test.ts: Pinhole geometry, screen conversion, staircase, and smoothing.
-- emaStability.test.ts: Sample vs population SD, Bessel's correction, noise reduction,
-  stability categorization, and cohort summary metrics.
-- staircaseReversalAnalysis.test.ts: 4-AFC psychometric function, stopping conditions,
-  Method 1 vs Method 2 scoring, and Monte Carlo reproducibility.
-- syntheticSimulator.test.ts: Mulberry32 PRNG determinism, Gaussian distribution,
-  production DistanceSmoother integration, and virtual participant distance scaling.
-
-
-5. END-TO-END USER AND DATA FLOW
--------------------------------
-1. Application Mount:
-   App mounts VisionProvider once and renders routes through HashRouter.
-   Individual page components are lazy-loaded via routePreload.ts.
-
-2. Camera Initialization:
-   On Camera Setup or Calibration, the user grants camera permission. The app
-   requests front-facing video at ideal 1280x720 (no audio).
-
-3. Vision Pipeline Loop (requestAnimationFrame):
-   For each video frame, VisionContext:
-   a. Runs MediaPipe Face Landmarker inference.
-   b. Extracts eye/iris landmarks (indices 468, 473) or eye corners fallback.
-   c. Calculates pixel IPD: sqrt((x_r - x_l)^2 + (y_r - y_l)^2).
-   d. Extracts head pose (yaw, pitch, roll) from the transformation matrix.
-   e. Computes raw distance from focal length, real IPD, and pixel IPD.
-   f. Pushes raw distance to DistanceSmoother (15-frame rolling window, 4-sigma
-      outlier rejection, EMA alpha=0.2).
-   g. Publishes tracking state (distance, smoothed distance, pose, confidence, FPS).
-
-4. Calibration Flow:
-   - Camera Calibration: Captures stable samples at known distances (1.50 m, 2.20 m,
-     or 3.00 m). Solves focal length f = (D * IPD_px) / IPD_mm. Points are averaged
-     and saved to localStorage ("mdva.cameraCalibration").
-   - Screen Calibration: User matches an on-screen slider against a physical ruler.
-     Computes pixelsPerMM = CSS_px / ruler_mm and saves to localStorage
-     ("mdva.screenCalibration").
-
-5. Visual Acuity Test Flow:
-   - Requires camera streaming, valid face tracking, and both calibrations.
-   - Initializes 1-up/1-down staircase at logMAR 0.3 (Snellen ~20/40).
-   - Dynamically resizes the SVG Tumbling E whenever smoothed distance changes by
-     more than 0.005 m, maintaining exact visual angle for the current logMAR.
-   - If user turns head beyond tolerance (yaw > 10 deg, pitch > 10 deg, roll > 15 deg)
-     or face tracking is lost, test pauses automatically.
-   - User inputs orientation via arrow keys, on-screen buttons, or keypad.
-   - Records trial response, latency, distance, physical size, and logMAR to IndexedDB.
-   - Staircase updates logMAR (correct -> step down / harder; incorrect -> step up / easier).
-   - Terminates after 6 direction reversals or 40 trials. Navigates to Results.
-
-6. Results Flow:
-   - Loads trial history from IndexedDB using mdva.lastSessionId.
-   - Scores test using the mean logMAR of the last up to 6 trials.
-   - Displays Snellen equivalent (e.g., 20/25), acuity grade, reversal count,
-     trial progression chart, distance stability chart, and trial data table.
-   - Offers CSV and JSON export of complete trial records.
-
-7. Research Validation & Parameter Analysis Flow (Validation Page):
-   - Section 1-3: User enters reference distance (tape/laser measured) and optional
-     physical optotype size.
-   - "Record 3s of Measurements": Captures 3 seconds (~90 frames at 30 fps) of
-     synchronous temporal tracking samples (t, D_t, D_t^EMA, D_ref).
-   - Computes mean estimate, absolute error, percentage error, and PASS/FAIL
-     against the configured tolerance (+/-3 cm).
-   - Stores record to IndexedDB with dataSource: "RECORDED".
-   - Section 4 (Summary): Displays cumulative records table, MAE, RMSE, and
-     download buttons for CSV and JSON with provenance metadata headers.
-   - Section 5 (Temporal Distance & EMA Smoothing): Interactive Recharts line
-     chart displaying raw vs. smoothed distance over time, noise dampening metrics,
-     and button to generate distance_smoothing.png paper figure.
-   - Section 6 (Research & Parameter Analysis):
-     Mode 1 - Participant Analysis: Inspects real recorded sessions. Shows median
-       EMA SD, noise reduction %, session selector, dual-line time series chart,
-       and CSV/JSON export with provenance headers.
-     Mode 2 - Stability Analysis: Inspects 10 synthetic test sequences (V01-V10).
-       Provides Mulberry32 PRNG seed controls (Re-roll / Reset), interactive
-       Stability Threshold Explorer (adjusting Stable and Moderate cutoffs),
-       dual-bar chart of Raw vs. EMA SD across distances, and Noise Reduction % chart.
-     Mode 3 - Parameter Comparison: Evaluates adaptive staircase stopping rules
-       (4, 6, 8, 10 reversals) via 4-AFC Monte Carlo simulation (100 runs per
-       condition). Compares Method 1 (last-N trials) with Method 2 (reversal points),
-       plots representative staircase trajectory with color-coded response dots
-       and green reversal vertices, and summarizes empirical trade-offs.
-
-
-6. CORE MATHEMATICS AND UNITS
------------------------------
-Pixel Interpupillary Distance (IPD):
-IPD_px = sqrt((x_right - x_left)^2 + (y_right - y_left)^2)
-Landmarks are normalized [0, 1] coordinates multiplied by source video width and
-height. Primary landmarks are iris centers (MediaPipe 468 and 473). Fallback is
-the midpoint of eye corners (33/133 and 362/263).
-
-Pinhole Distance Model:
-D = (f * W) / w
-D_mm = (focalLength_px * realIPD_mm) / measuredIPD_px
-D_m = D_mm / 1000
-
-Inverse Calibration Formulation:
-f = (D_mm * measuredIPD_px) / realIPD_mm
-Multi-point calibration computes f for each sample distance and takes the
-arithmetic mean.
-
-Screen Calibration:
-pixelsPerMM = displayedReferencePixels / physicalReferenceMM
-size_px = size_mm * pixelsPerMM
-size_mm = size_px / pixelsPerMM
-
-Visual Angle and Physical Optotype Size:
-theta_rad = arcminutes * pi / (180 * 60)
-H = 2 * D * tan(theta_rad / 2)
-theta_rad_actual = 2 * atan((H / 2) / D)
-H and D must use identical units (e.g., mm). Standard reference acuity is
-5 arcminutes of total height for 20/20 (logMAR 0.0).
-
-logMAR Sizing:
-Snellen denominator = 20 * 10^logMAR
-target angle = 5 arcminutes * (Snellen denominator / 20)
-At distance D = 1.50 m: H = 2.18 mm (logMAR 0.0, 5 arcmin)
-At distance D = 2.20 m: H = 3.20 mm
-At distance D = 3.00 m: H = 4.36 mm
-
-Exponential Moving Average (EMA) Distance Smoothing:
-D_t^EMA = alpha * D_t + (1 - alpha) * D_{t-1}^EMA
-Default alpha = 0.20 (CONFIG.defaultSmoothingAlpha).
-Outlier Rejection: DistanceSmoother maintains a 15-frame rolling window. After
-5 frames, if a raw sample deviates by more than 4 standard deviations from the
-window median, the median is substituted before updating the EMA.
-
-Standard Deviation Conventions:
-- Population Variance:
-  sigma^2 = (1 / N) * sum((x_i - mu)^2)
-  sigma = sqrt(sigma^2)
-- Sample Variance (Bessel's correction N - 1):
-  s^2 = (1 / (N - 1)) * sum((x_i - x_bar)^2)
-  s = sqrt(s^2)
-Sample SD is the standard convention used across stability analysis for finite
-continuous tracking series.
-
-Noise Reduction Percentage:
-Noise Reduction (%) = max(0, ((raw_SD - smoothed_SD) / raw_SD) * 100)
-Handles zero raw SD and noise inflation safely without division-by-zero.
-
-Validation Distance Error Metrics:
-Absolute Error = abs(estimated - actual)
-Percentage Error = abs(estimated - actual) / actual * 100
-MAE = mean(abs(estimated_i - actual_i))
-RMSE = sqrt(mean((estimated_i - actual_i)^2))
-Max Error = max(abs(estimated_i - actual_i))
-
-Synthetic Participant Simulation Model:
-For each frame t at 30 fps (dt = 1/30 s):
-1. Postural sway: D_drift(t) = driftAmp * sin(2 * pi * driftFreq * t + phase)
-2. Optical sensor noise: D_noise(t) ~ Gaussian(0, sensorNoiseSd)
-   (sensorNoiseSd scales with distance from 0.008 m at 0.8 m to 0.036 m at 2.5 m)
-3. Outlier spike: D_spike(t) injected at specified frames (+/-0.08 m to +/-0.12 m)
-4. Raw estimate: D_raw(t) = D_ref + D_drift(t) + D_noise(t) + D_spike(t)
-5. Filtered estimate: D_EMA(t) computed via production DistanceSmoother
-
-4-AFC Psychometric Response Function:
-P(correct | logMAR, trueLogMAR) = gamma + (1 - gamma - lambda) * [1 / (1 + exp(-beta * (logMAR - trueLogMAR)))]
-where:
-- gamma = 0.25 (1 in 4 chance guessing rate)
-- lambda = 0.02 (human lapse / error rate)
-- beta = 8.0 (steepness of the human optotype resolution psychometric function)
-
-Staircase Scoring Methods:
-- Method 1 (Application Logic - Last-N sequential trials):
-  logMAR_est = (1 / N) * sum_{i=K-N+1}^K logMAR_i
-- Method 2 (Psychophysical Standard - Reversal vertices):
-  logMAR_est = (1 / M) * sum_{j=1}^M logMAR_reversal_j
-
-
-7. TUMBLING E, STAIRCASE, AND STOPPING RULES
--------------------------------------------
-Optotype Specification:
-The Tumbling E is rendered as a geometric SVG on a 5x5 grid. The full height
-corresponds to the calculated pixel size, and each stroke/gap is exactly 1/5th
-of the height. Orientations are 0 deg (Right), 90 deg (Down), 180 deg (Left),
-and 270 deg (Up).
-
-Staircase Configuration (src/config.ts):
-- Starting logMAR: 0.3 (Snellen 20/40)
-- Step size: 0.1 logMAR
-- Boundary limits: -0.3 to 1.0 logMAR
-- Stopping condition: 6 direction reversals, or 40 total trials
-- Correct response: step down (smaller/harder by 0.1 logMAR)
-- Incorrect response: step up (larger/easier by 0.1 logMAR)
-- Consecutive orientation constraint: immediate repetition of the previous
-  orientation is disallowed to prevent response perseveration.
-
-Stopping Rule Trade-off & Empirical Findings:
-- 4 Reversals: Quickest test (~15 trials, 100% completion), but highest test-retest
-  variation (SD +/-0.08 logMAR) due to vulnerability to early lucky guesses.
-- 6 Reversals (Application Default): Optimal operational balance (~22-24 trials,
-  98% completion, SD +/-0.06 logMAR) without triggering user fatigue.
-- 8 Reversals: Marginal precision gain (SD +/-0.05 logMAR) requiring ~30 trials,
-  where user attention and ocular fatigue begin to degrade accuracy.
-- 10 Reversals: Longest duration (~35 trials). Approximately 10% of runs hit
-  the 40-trial ceiling, introducing truncation bias.
-Conclusion: The 6-reversal threshold is an empirically justified engineering choice
-for web-based testing.
-
-
-8. STORAGE, DATA PROVENANCE, AND PRIVACY
-----------------------------------------
-localStorage Keys:
-- mdva.cameraCalibration: stored focal length (pixels), calibration distance, IPD.
-- mdva.screenCalibration: stored pixelsPerMM, screen reference dimensions.
-- mdva.lastSessionId: UUID of the most recently completed test session.
-- mdva.settings: general user settings container.
-
-IndexedDB Database:
-- Database Name: monocular-depth-va
-- Version: 1
-- Object Stores:
-  1. trials (key: id, index: sessionId): trial-by-trial responses, correctness,
-     latency, distance, optotype size, logMAR.
-  2. validation (key: id, index: sessionId): reference distance, estimated distance,
-     absolute/percentage error, confidence, head pose, pass/fail, temporalSamples,
-     and dataSource ("RECORDED").
-
-Data Segregation and Provenance:
-- Live webcam validation records are explicitly tagged dataSource: "RECORDED".
-- Synthetic benchmark sequences and simulated participants are tagged dataSource:
-  "SIMULATED" or "SYNTHETIC_TEST_SEQUENCE" with isSimulated: true.
-- Simulated data is NEVER saved to IndexedDB or merged with human validation data.
-- CSV exports include commented metadata header lines (# Key: Value) identifying
-  data source, export timestamp, parameters, and sample counts.
-- JSON exports include a top-level metadata wrapper alongside data arrays.
-
-Privacy Principles:
-All webcam video processing occurs entirely in-browser using WebAssembly and WebGL.
-No video frames, face images, or landmarks are transmitted to any server or
-stored in persistent browser storage. Only derived numerical measurements remain
-in browser storage unless explicitly exported by the user.
-
-
-9. CONFIGURATION REFERENCE (src/config.ts)
-------------------------------------------
-Vision & Tracking:
-- targetVisualAngleArcMin: 5 (standard 20/20 optotype height)
-- defaultIPDmm: 63 (human adult population mean)
-- targetDistanceToleranceM: 0.03 (+/-3 cm research target)
-- defaultSmoothingAlpha: 0.20 (EMA smoothing factor; allowed range 0.05 - 0.60)
-- calibrationStableFrameCount: 20 (consecutive stable frames required for calibration)
-- distanceChangeThresholdM: 0.005 (5 mm movement deadband before resizing optotype)
-- maxHeadPoseYawDeg: 10
-- maxHeadPosePitchDeg: 10
-- maxHeadPoseRollDeg: 15
-- cameraRequest: ideal resolution 1280x720, front-facing, no audio
-
-Acuity Staircase:
-- startingLogMAR: 0.3
-- logMARStep: 0.1
-- minLogMAR: -0.3
-- maxLogMAR: 1.0
-- requiredReversals: 6
-- maxTrials: 40
-- referenceDistanceM: 6.0 (for standard 20/XX Snellen notation)
-
-Research Stability Thresholds (src/vision/emaStabilityAnalysis.ts):
-- stableMaxCm: 0.5 (SD <= 0.5 cm -> Stable)
-- moderateMaxCm: 1.0 (0.5 < SD <= 1.0 cm -> Moderate; > 1.0 cm -> Elevated Noise)
-
-Simulator & Psychometric Constants:
-- DEFAULT_SIMULATOR_SEED: 0x5f3759df (Mulberry32 PRNG seed)
-- 4-AFC parameters: gamma = 0.25, lambda = 0.02, beta = 8.0
-
-
-10. DEVELOPMENT AND CHECKS
+2. CURRENT VALIDATION PAGE
 --------------------------
-Prerequisites:
-Node.js (>= 18) and npm.
+The Validation page (`src/pages/Validation.tsx`) contains:
+- A physical-reference distance input, measured independently from the webcam
+  estimate.
+- A three-second capture of valid raw and EMA distance samples from the live
+  production tracking pipeline.
+- Recorded-only distance error summaries and CSV/JSON exports.
+- A recorded EMA analysis section with raw-versus-EMA graph and a
+  pilot-based EMA stability classification summary for PO1-PO13.
 
-Standard CLI Commands:
-- npm install: Install project dependencies.
-- npm run dev: Start Vite local development server.
-- npm test: Run automated unit tests via Vitest.
-- npm run build: Run TypeScript check (tsc -b) and generate production bundle.
-- npm run lint: Run oxlint linter across codebase.
-- npm run preview: Serve production build locally.
+The app now includes a dedicated "Pilot-Based EMA Stability Classification"
+section in the recorded EMA analysis. It describes exploratory cohort-relative
+variability using participant-level EMA sample SD values derived from eligible
+saved real recordings. After a valid three-second unlinked recording is saved,
+the Validation page also shows that new user's EMA SD and, when pilot thresholds
+are available, the relative category and Q1/Q3 values. The new-user recording
+is not added to the PO1-PO13 pilot calculation.
 
-Automated Test Coverage (44 tests across 5 test suites):
-1. src/__tests__/math.test.ts:
-   Pure math, visual angle conversion, pinhole equations, and error metrics.
-2. src/__tests__/pipeline.test.ts:
-   Camera calibration round-trips, screen px/mm scaling, staircase stepping,
-   orientation non-repetition, and DistanceSmoother behavior.
-3. src/__tests__/emaStability.test.ts:
-   Exact sample SD (Bessel's correction N-1) vs. population SD (N), noise
-   reduction formula with zero/negative guards, stability metrics computation,
-   and cohort summary statistics.
-4. src/__tests__/staircaseReversalAnalysis.test.ts:
-   4-AFC psychometric response function bounds, adaptive staircase termination,
-   reversal counting, Method 1 vs Method 2 scoring, and Monte Carlo reproducibility.
-5. src/__tests__/syntheticSimulator.test.ts:
-   Mulberry32 PRNG determinism, Gaussian distribution properties, production
-   DistanceSmoother integration, distance-scaling noise, and strict data separation.
+There is no simulated sample generation in the Validation page. Older simulator
+and algorithm-analysis modules may remain elsewhere in the repository, but they
+are not mounted in this page and must never be presented as participant data.
+No real recording should be fabricated or generated to fill a missing cohort
+row.
+
+Participant identity and table separation:
+- The cohort labels are PO1 through PO13.
+- Existing legacy identifiers P01 through P13 (and unpadded PO/P forms) are
+  normalized to PO1 through PO13 for analysis.
+- The separate PO1-PO13 table always lists all 13 identifiers. A participant
+  with no eligible real recording is shown as awaiting data and contributes no
+  values to cohort summaries.
+- "Recorded distance results — additional recordings" contains only eligible
+  real recordings with no participant ID. Its summary statistics and downloads
+  use the same subset. Any participant-linked recordings must not appear in
+  that table or those exports; records with unsupported participant IDs are
+  excluded from both this table and the PO1-PO13 cohort summary.
+- The EMA session graph can inspect any eligible saved real recording, whether
+  or not it has a PO1-PO13 association.
+- Only records tagged `RECORDED` enter recorded-human analysis. Records with
+  missing or other source tags are excluded; the Validation page does not show
+  a separate source-review section. Invalid `RECORDED` attempts are listed
+  with their status/reason and are not used in metrics.
+- The cohort count is derived from saved, eligible records. Do not claim 13
+  participants have complete usable data until the saved records have been
+  checked for identity, validity, and protocol completeness.
+- The pilot stability summary reports included participants out of 13, Q1,
+  median, and Q3 for participant-level EMA SD, and a per-participant
+  classification of Low / Medium / High variability. Missing participants
+  remain unavailable instead of being assigned zero or a low-variability label.
+- Pilot quartiles and classifications remain unavailable until at least two
+  participants have eligible recordings. A new user's valid EMA SD is still
+  shown when thresholds are unavailable, but no category is assigned.
+- The new-user result applies only to the just-saved valid three-second
+  unlinked recording. Invalid attempts, participant-linked records, simulated
+  rows, and records with unknown provenance are not classified as a new user.
+
+The page stores numerical observations in the browser's IndexedDB validation
+store. It does not store webcam images or video. Existing numerical records
+must not be deleted as part of routine UI changes.
 
 
-11. RESEARCH LIMITATIONS AND IMPLEMENTATION NOTES
--------------------------------------------------
-- Pinhole Approximation: Individual webcam focal lengths and fields of view vary.
-  Personal camera calibration is strongly recommended; the uncalibrated fallback
-  (0.9 * video width) is a rough demonstration approximation.
-- Assumed IPD Variance: Accurate distance relies on physical IPD. The default
-  63 mm is a population average; variations in anatomical IPD directly scale
-  distance estimation error.
-- Optical & Sensor Distortions: Lens distortion, rolling shutter, lighting changes,
-  head foreshortening, and camera placement relative to screen center are not
-  fully corrected by the simple pinhole geometry.
-- Head Pose Gate: Head pose is used as a binary test pause gate; it does not
-  geometrically compensate IPD for out-of-plane head rotations.
-- Screen Calibration Dependency: Screen calibration (pixels/mm) is invalidated
-  by changes in monitor resolution, display scaling, or browser zoom level.
-- Scoring Differences: Current application scoring averages the last N sequential
-  trials. Classic psychophysical protocols average reversal vertices. The
-  Parameter Comparison tool provides empirical transparency between both approaches.
-- Synthetic vs. Real Data: Synthetic virtual participants (V01-V10) are purely
-  computational models designed for algorithm testing and sensitivity analysis.
-  They are not real human participants.
-- Clinical Disclaimer: This software is an engineering research prototype.
-  It does not provide diagnostic or clinical visual acuity assessment.
+3. RESEARCH QUESTION AND PROPOSED PILOT ANALYSIS
+------------------------------------------------
+The proposed analysis is whether EMA smoothing reduces short-term variability
+in webcam distance tracking while preserving agreement with a physical
+reference. The intended pilot cohort comprises 13 real participants
+(PO1-PO13), each contributing eligible three-second recordings. The participant
+is the unit for cohort summaries: first average eligible recordings within a
+participant, then calculate the cohort distribution so participants with more
+recordings do not dominate.
+
+The implementation now applies the following pilot-based classification exactly:
+- Participant-level EMA distance sample SD (cm) is the primary stability
+  metric.
+- For each eligible real recording, compute the EMA sample SD using Bessel's
+  correction (N-1) and convert to centimetres only for display/reporting.
+- For each participant, aggregate across eligible recordings by taking the mean
+  of that participant's recording-level EMA SD values; each participant
+  contributes at most one value to the cohort distribution.
+- Calculate Q1, median, and Q3 on the participant-level EMA SD values only.
+- Low variability: participant-level EMA SD < Q1.
+- Medium variability: participant-level EMA SD >= Q1 and <= Q3.
+- High variability: participant-level EMA SD > Q3.
+- Values exactly equal to a boundary are classified as medium.
+- The thresholds are shown only after at least two eligible participants
+  contribute values; otherwise the summary reports insufficient pilot data.
+- The new-user result uses the same three-second Validation capture and
+  recording-level sample SD calculation. It compares the new user's EMA SD
+  against pilot Q1/Q3 without adding that recording to the pilot cohort.
+
+For every eligible recording, report:
+- Number of valid temporal samples and capture duration.
+- Raw and EMA mean distance.
+- Raw and EMA sample standard deviation (SD).
+- Raw and EMA absolute distance error relative to the physical reference.
+- EMA noise reduction.
+
+For the PO1-PO13 cohort, report participant-level values and the observed Q1,
+median, and Q3 for EMA SD. The new user's category is a descriptive comparison
+to these thresholds, not a diagnosis or explanation of the cause of
+variability. These quartiles describe this pilot; they are not
+preselected limits, proof of clinical acceptability, or universally applicable
+thresholds. Lower SD means lower observed variability, not necessarily greater
+accuracy. Interpret stability together with absolute error and assess any
+candidate threshold in an independent, larger cohort.
+
+Do not state numerical participant results or quartiles in a paper until the
+actual saved/exported recordings have been checked. A nominal cohort size of
+13 is not proof that all 13 participants have complete valid recordings.
+
+Suggested IEEE proposal wording:
+
+"We propose to characterize short-term distance-tracking variability using
+the three-second webcam recordings from a 13-participant pilot cohort
+(PO1-PO13), with independently measured physical distance as the reference.
+For each participant, the mean EMA sample standard deviation across eligible
+recordings will be summarized and classified into low, medium, and high
+cohort-relative variability bands using Q1 and Q3 from the observed
+participant distribution. Participant-level absolute distance error and EMA
+noise reduction will be reported separately, and the pilot bands will be
+presented as exploratory summaries rather than prevalidated acceptance limits.
+Candidate stability criteria will be assessed alongside distance accuracy and
+require confirmation in an independent, larger cohort."
+
+Suggested interpretation of observed bands:
+- Below Q1: lower variability than most observed participant values in this
+  pilot.
+- Q1 through Q3: central half of the observed participant distribution.
+- Above Q3: higher variability than most observed participant values in this
+  pilot.
+- For noise reduction, larger positive values indicate greater reduction of
+  temporal SD; a negative value indicates that EMA SD exceeded raw SD.
+
+These statements are descriptive and should not be phrased as pass/fail rules
+unless a future study prespecifies and validates such a rule.
 
 
-12. GUIDANCE FOR A FOLLOW-ON CODING ASSISTANT
----------------------------------------------
-When implementing changes in this repository:
-1. Architectural Discipline: Vision state is centralized in VisionContext;
-   geometry and math in src/vision/ and src/utils/math.ts; calibration storage
-   in calibrationStorage.ts. Maintain this modular structure.
-2. Unit Rigor: Preserve unit consistency (meters vs. millimeters; CSS pixels
-   vs. physical screen millimeters).
-3. Research Transparency: Clearly differentiate between real recorded human data
-   and synthetic simulations. Always preserve data source tags and provenance
-   metadata in exports.
-4. Scientific Integrity: Do not describe experimental acuity scores as clinically
-   proven. Do not fabricate distance measurements or validation outcomes.
-5. Local Processing: Keep video processing strictly in-browser; never persist or
-   upload camera frames or facial landmark images.
-6. Centralized Configuration: Place new tuning thresholds or magic numbers in
-   src/config.ts rather than hardcoding in UI components.
-7. Verification: Always run `npm test` and `npm run build` after modifying logic
-   or types to maintain zero build errors and 100% test pass rate.
+4. METRICS AND DATA HANDLING
+----------------------------
+Temporal samples contain elapsed time, raw distance, EMA-smoothed distance,
+and physical reference distance. Invalid or non-positive distance samples are
+excluded from the EMA calculations. At least two valid samples are required.
+
+Sample standard deviation uses Bessel's correction (N-1):
+  s = sqrt(sum((x_i - x_bar)^2) / (N - 1))
+
+The pilot stability metric is participant-level EMA SD in centimetres. For
+eligible recordings, the recording-level EMA SD is computed and then aggregated
+within each participant using the mean across that participant's eligible
+recordings. This avoids allowing more recordings from a single participant to
+contribute more weight to the cohort distribution.
+
+EMA noise reduction is not clamped:
+  noise_reduction_percent = ((raw_SD - EMA_SD) / raw_SD) * 100
+
+If raw SD is zero, noise reduction is not applicable. A negative result must
+remain negative and indicates noise inflation; it must not be silently changed
+to zero.
+
+For each recording:
+  absolute_error = abs(mean_EMA_distance - physical_reference_distance)
+  percentage_error = absolute_error / physical_reference_distance * 100
+
+The Pilot-Based EMA Stability Classification section reports the participant
+count included in the cohort, Q1, median, and Q3 for the participant-level EMA
+SD distribution, and the participant table with per-participant classification,
+absolute distance error, and noise reduction. Accuracy remains separate from
+EMA stability: the absolute distance error is reported independently and is not
+used to define the Low / Medium / High stability bands.
+
+The distance results summary reports recording-level MAE, RMSE, maximum error,
+and the count within the configured +/-3 cm engineering target. This target is
+a prototype benchmark, not a guaranteed performance level or clinical limit.
+The additional-record table, its summary, and exports include only rows without
+a participant ID. Unsupported participant IDs and unknown provenance are
+excluded from these calculations and are not categorized as additional
+recordings. Invalid recorded attempts are excluded and identified separately.
+The participant EMA table and pilot quartiles use only valid, real recordings
+associated with PO1-PO13. The new-user category is based on a just-saved
+unlinked recording, uses the same three-second sample duration, and is kept
+separate from the pilot participant values.
+
+The participant table's missing values are display placeholders only. They are
+not zero-valued measurements and must not be included in descriptive
+statistics.
+
+
+5. SIX-REVERSAL SETTING
+-----------------------
+The production staircase is a 1-up/1-down logMAR procedure. A reversal is a
+change in response direction, and the configured stopping rule is six
+reversals, subject to a 40-trial maximum.
+
+Defensible proposal language:
+"Six reversals were selected as a pragmatic prototype stopping setting to
+observe repeated changes in response direction while limiting participant
+burden; this setting is not claimed to be optimal or clinically validated."
+
+Important implementation distinction: the current displayed acuity score is
+the mean logMAR of the last up to six sequential trials. It does not average
+the reversal-point values. A paper must not describe these two scoring methods
+as equivalent. Evidence that six reversals is preferable would require a
+prespecified comparison against alternatives and validation data; the current
+setting alone is not that evidence.
+
+
+6. APPLICATION ARCHITECTURE
+----------------------------
+- React and TypeScript single-page application, bundled with Vite.
+- `src/context/VisionContext.tsx` owns webcam, landmark tracking, and current
+  raw/EMA distance state.
+- MediaPipe Face Landmarker runs in the browser. No webcam video is uploaded.
+- `src/vision/distanceEstimator.ts` implements the geometric IPD/pinhole
+  distance estimate.
+- `src/vision/distanceSmoothing.ts` implements the production distance
+  smoothing pipeline.
+- `src/visionAcuity/` contains optotype sizing, the staircase, and scoring.
+- `src/utils/storage.ts` persists trial and validation numerical records in
+  IndexedDB.
+- `src/utils/csvExport.ts` produces CSV and JSON downloads with provenance
+  metadata.
+- `src/pages/Validation.tsx` handles the physical reference capture, the
+  additional-record distance summary, and the current new-user result session.
+- `src/components/RecordedEmaAnalysisSection.tsx` handles recorded EMA
+  plotting, the PO1-PO13 table, pilot-derived thresholds, and the new-user
+  EMA classification display.
+- `src/vision/realValidation.ts` holds the shared recording eligibility,
+  participant aggregation, quartile, and classification helpers.
+- `src/components/RealParticipantValidationSection.tsx` is an older
+  participant-recording workflow component and is not currently mounted by
+  the Validation page. Do not assume it is the active capture route.
+- Legacy simulator/algorithm-analysis source files and their tests may remain
+  in the repository. They are separate from real recordings and are not
+  displayed as Validation results.
+
+
+7. RELEVANT CONFIGURATION
+-------------------------
+`src/config.ts`:
+- `defaultSmoothingAlpha`: default EMA weight (currently 0.20).
+- `targetDistanceToleranceM`: configured distance-error benchmark (currently
+  0.03 m).
+- `requiredReversals`: staircase reversal stopping value (currently 6).
+- `maxTrials`: staircase hard cap (currently 40).
+
+The Validation page samples for three seconds. The real participant recording
+helper defines a default protocol of reference distances [1, 1.5, 2] m and
+three repetitions per distance, but that helper is not mounted as the current
+Validation capture UI. Do not infer completion of that protocol from a
+participant label alone.
+
+
+8. PRIVACY, PROVENANCE, AND SCIENTIFIC INTEGRITY
+------------------------------------------------
+- Keep video and image processing local to the browser.
+- Store only numerical records; never persist or upload camera frames or facial
+  images.
+- Preserve `dataSource: "RECORDED"` and recording validity information.
+- Keep simulations and other generated examples out of PO1-PO13 statistics,
+  additional-record summaries, and exports.
+- Do not remove a user's saved validation records unless explicitly requested.
+- Do not claim that 13 complete records or any specific quartile has been
+  verified without checking the actual dataset.
+- Distinguish an exploratory pilot description from a validated threshold.
+- Do not describe experimental acuity results as clinical diagnoses.
+
+
+9. DEVELOPMENT AND VERIFICATION
+-------------------------------
+Prerequisites: Node.js 18 or newer and npm.
+
+Useful commands:
+- `npm run dev` - start the local Vite development server.
+- `npm test` - run Vitest tests.
+- `npm run build` - type-check and build the production application.
+- `npm run lint` - run oxlint.
+
+Relevant tests include:
+- `src/__tests__/realValidation.test.ts` - participant identifiers, valid
+  recorded samples, participant protocol completion, and real-data metrics.
+- `src/__tests__/emaStability.test.ts` - EMA stability metrics and variance
+  conventions.
+- `src/__tests__/pipeline.test.ts` - vision geometry, smoothing, and staircase
+  behavior.
+
+After changing participant normalization or cohort calculation, test both
+canonical PO1-PO13 identifiers and legacy P01-P13 identifiers. verify that participant-linked records do not appear in the additional-record
+table or its downloads, unknown provenance is identified for review, and
+missing participant rows remain absent from calculations.
+
+
+10. IMPLEMENTATION LIMITATIONS
+------------------------------
+- The pinhole estimate depends on individual IPD, camera geometry, lighting,
+  head position, and calibration quality.
+- EMA variability reduction alone does not establish distance accuracy.
+- A three-second recording and a 13-person pilot are exploratory and do not
+  establish broad population thresholds or clinical validity.
+- Quartiles from a small cohort are sensitive to the observed sample and
+  quantile method.
+- Six reversals are a prototype protocol choice, not a demonstrated optimum.
+- The last-six-trials score differs from a reversal-point mean.
+- Independent, larger-sample evaluation is needed before promoting any
+  proposed stability band or threshold as an acceptance criterion.
+
+
+11. GUIDANCE FOR FUTURE CHANGES
+-------------------------------
+1. Preserve clear separation between PO1-PO13 cohort data and additional
+   recorded distance results.
+2. Keep participant aliases normalized consistently; never silently discard
+   valid legacy identifiers.
+3. Calculate cohort quartiles from one participant-level value per participant,
+   not from a pooled set of frames.
+4. Keep negative noise-reduction values and label zero raw SD as not
+   applicable.
+5. Do not create fabricated measurements to fill missing cohort rows.
+6. Maintain physical reference distance as ground truth; do not replace it with
+   webcam estimates.
+7. Run focused tests, `npm run build`, and the relevant linter after changing
+   application logic.
 
 END OF HANDOFF

@@ -53,17 +53,16 @@ describe("Noise reduction percentage calculation", () => {
     expect(calculateNoiseReduction(raw, smoothed)).toBeCloseTo(75.0, 5);
   });
 
-  it("handles zero raw SD safely by returning 0% without NaN or divide-by-zero", () => {
-    expect(calculateNoiseReduction(0, 0)).toBe(0);
-    expect(calculateNoiseReduction(0, 0.5)).toBe(0);
-    expect(calculateNoiseReduction(-1, 0.5)).toBe(0);
+  it("reports zero raw SD as not applicable", () => {
+    expect(calculateNoiseReduction(0, 0)).toBeNull();
+    expect(calculateNoiseReduction(0, 0.5)).toBeNull();
+    expect(calculateNoiseReduction(-1, 0.5)).toBeNull();
   });
 
   it("safely handles non-finite values and noise inflation", () => {
-    expect(calculateNoiseReduction(NaN, 1.0)).toBe(0);
-    expect(calculateNoiseReduction(1.0, NaN)).toBe(0);
-    // When smoothed SD > raw SD, bounded to 0
-    expect(calculateNoiseReduction(1.0, 1.5)).toBe(0);
+    expect(calculateNoiseReduction(NaN, 1.0)).toBeNull();
+    expect(calculateNoiseReduction(1.0, NaN)).toBeNull();
+    expect(calculateNoiseReduction(1.0, 1.5)).toBe(-50);
   });
 });
 
@@ -108,8 +107,31 @@ describe("EMA Stability Metrics computation", () => {
     expect(metrics.sampleCount).toBe(0);
     expect(metrics.rawSdCm).toBe(0);
     expect(metrics.smoothedSdCm).toBe(0);
-    expect(metrics.noiseReductionPct).toBe(0);
+    expect(metrics.noiseReductionPct).toBeNull();
     expect(metrics.stabilityCategory).toBe("Elevated Noise");
+  });
+
+  it("reports zero raw variability as not applicable and preserves noise inflation", () => {
+    const zeroRaw = [
+      { timeSec: 0, rawDistanceM: 1, smoothedDistanceM: 1, referenceDistanceM: 1 },
+      { timeSec: 1, rawDistanceM: 1, smoothedDistanceM: 1.1, referenceDistanceM: 1 },
+    ];
+    expect(
+      computeEmaStabilityMetrics(zeroRaw, {
+        participantId: "P01-R1",
+        dataSource: "REAL",
+        referenceDistanceM: 1,
+      }).noiseReductionPct
+    ).toBeNull();
+
+    const inflated = computeEmaStabilityMetrics(
+      [
+        { timeSec: 0, rawDistanceM: 1, smoothedDistanceM: 0.9, referenceDistanceM: 1 },
+        { timeSec: 1, rawDistanceM: 1.01, smoothedDistanceM: 1.1, referenceDistanceM: 1 },
+      ],
+      { participantId: "P01-R2", dataSource: "REAL", referenceDistanceM: 1 }
+    );
+    expect(inflated.noiseReductionPct).toBeLessThan(0);
   });
 });
 

@@ -27,6 +27,7 @@ export interface TrackingSnapshot {
   fps: number;
   videoWidth: number;
   videoHeight: number;
+  observedAtMs: number | null;
 }
 
 interface VisionContextValue {
@@ -51,6 +52,7 @@ const initialTracking: TrackingSnapshot = {
   fps: 0,
   videoWidth: 0,
   videoHeight: 0,
+  observedAtMs: null,
 };
 
 const VisionContext = createContext<VisionContextValue | null>(null);
@@ -134,9 +136,16 @@ export function VisionProvider({ children }: { children: ReactNode }) {
         fps: fpsFramesRef.current.length,
         videoWidth: video.videoWidth,
         videoHeight: video.videoHeight,
+        observedAtMs: now,
       });
     } catch (err) {
       console.error("Vision loop error:", err);
+      setTracking({
+        ...initialTracking,
+        videoWidth: video?.videoWidth ?? 0,
+        videoHeight: video?.videoHeight ?? 0,
+        observedAtMs: performance.now(),
+      });
     }
 
     rafRef.current = requestAnimationFrame(runLoop);

@@ -50,7 +50,7 @@ export interface EmaStabilityMetrics {
   /** EMA-smoothed distance standard deviation in centimetres */
   smoothedSdCm: number;
   /** Noise reduction percentage = ((raw SD - smoothed SD) / raw SD) * 100 */
-  noiseReductionPct: number;
+  noiseReductionPct: number | null;
   /** Mean raw distance in meters */
   meanRawM: number;
   /** Mean EMA-smoothed distance in meters */
@@ -78,8 +78,8 @@ export interface CohortSummary {
   medianEmaSdCm: number;
   minEmaSdCm: number;
   maxEmaSdCm: number;
-  meanNoiseReductionPct: number;
-  medianNoiseReductionPct: number;
+  meanNoiseReductionPct: number | null;
+  medianNoiseReductionPct: number | null;
   stableCount: number;
   moderateCount: number;
   elevatedNoiseCount: number;
@@ -141,9 +141,9 @@ export function computeEmaStabilityMetrics(
   const sdConvention = useSampleSd ? "Sample SD (N-1)" : "Population SD (N)";
   const sdFn = useSampleSd ? sampleStdDev : populationStdDev;
 
-  // Handle empty or missing samples safely
+  // Handle empty or missing samples safely without substituting study values.
   if (!samples || samples.length === 0) {
-    const refM = options.referenceDistanceM ?? 1.5;
+    const refM = options.referenceDistanceM ?? Number.NaN;
     return {
       participantId,
       dataSource,
@@ -153,11 +153,11 @@ export function computeEmaStabilityMetrics(
       effectiveFps: 0,
       rawSdCm: 0,
       smoothedSdCm: 0,
-      noiseReductionPct: 0,
-      meanRawM: 0,
-      meanSmoothedM: 0,
-      absoluteErrorCm: 0,
-      percentageError: 0,
+      noiseReductionPct: null,
+      meanRawM: Number.NaN,
+      meanSmoothedM: Number.NaN,
+      absoluteErrorCm: Number.NaN,
+      percentageError: Number.NaN,
       outliersDetected: 0,
       stabilityCategory: "Elevated Noise",
       sdConvention,
@@ -166,18 +166,25 @@ export function computeEmaStabilityMetrics(
     };
   }
 
-  const rawValuesM = samples.map((s) => s.rawDistanceM).filter(Number.isFinite);
-  const smoothedValuesM = samples.map((s) => s.smoothedDistanceM).filter(Number.isFinite);
+  const validSamples = samples.filter(
+    (sample) =>
+      Number.isFinite(sample.timeSec) &&
+      Number.isFinite(sample.rawDistanceM) &&
+      Number.isFinite(sample.smoothedDistanceM)
+  );
+  const rawValuesM = validSamples.map((sample) => sample.rawDistanceM);
+  const smoothedValuesM = validSamples.map((sample) => sample.smoothedDistanceM);
 
   // Derive reference distance
-  const refM = options.referenceDistanceM ?? samples[0]?.referenceDistanceM ?? 1.5;
+  const sampleReference = validSamples.find((sample) => Number.isFinite(sample.referenceDistanceM))?.referenceDistanceM;
+  const refM = options.referenceDistanceM ?? sampleReference ?? Number.NaN;
 
   // Duration and effective FPS
-  const firstTime = samples[0]?.timeSec ?? 0;
-  const lastTime = samples[samples.length - 1]?.timeSec ?? 0;
+  const firstTime = validSamples[0]?.timeSec ?? 0;
+  const lastTime = validSamples[validSamples.length - 1]?.timeSec ?? 0;
   const rawDuration = lastTime - firstTime;
-  const durationSec = rawDuration > 0 ? Number(rawDuration.toFixed(3)) : 3.0;
-  const effectiveFps = durationSec > 0 ? Number((samples.length / durationSec).toFixed(1)) : 30;
+  const durationSec = rawDuration > 0 ? Number(rawDuration.toFixed(3)) : 0;
+  const effectiveFps = durationSec > 0 ? Number((validSamples.length / durationSec).toFixed(1)) : 0;
 
   // Standard deviations converted to centimetres
   const rawSdM = rawValuesM.length > 0 ? sdFn(rawValuesM) : 0;
@@ -187,17 +194,18 @@ export function computeEmaStabilityMetrics(
   const smoothedSdCm = Number.isFinite(smoothedSdM) ? Number((smoothedSdM * 100).toFixed(3)) : 0;
 
   // Noise reduction percentage: safely handles zero raw SD
-  const noiseReductionPct = Number(calculateNoiseReduction(rawSdCm, smoothedSdCm).toFixed(2));
+  const noiseReduction = calculateNoiseReduction(rawSdCm, smoothedSdCm);
+  const noiseReductionPct = noiseReduction === null ? null : Number(noiseReduction.toFixed(2));
 
   // Means
   const meanRawM = rawValuesM.length > 0 ? Number(mean(rawValuesM).toFixed(4)) : 0;
   const meanSmoothedM = smoothedValuesM.length > 0 ? Number(mean(smoothedValuesM).toFixed(4)) : 0;
 
   // Errors against reference distance
-  const absErrM = absoluteError(meanSmoothedM, refM);
+  const absErrM = Number.isFinite(refM) ? absoluteError(meanSmoothedM, refM) : Number.NaN;
   const absoluteErrorCm = Number((absErrM * 100).toFixed(2));
-  const pctErr = percentageError(meanSmoothedM, refM);
-  const percentageErrorVal = Number.isFinite(pctErr) ? Number(pctErr.toFixed(2)) : 0;
+  const pctErr = Number.isFinite(refM) ? percentageError(meanSmoothedM, refM) : Number.NaN;
+  const percentageErrorVal = Number.isFinite(pctErr) ? Number(pctErr.toFixed(2)) : Number.NaN;
 
   // Outlier detection: count frames where raw distance deviates significantly from local window
   // Evaluated against the prior 15-frame rolling window baseline
@@ -223,7 +231,7 @@ export function computeEmaStabilityMetrics(
     participantId,
     dataSource,
     referenceDistanceM: refM,
-    sampleCount: samples.length,
+    sampleCount: validSamples.length,
     durationSec,
     effectiveFps,
     rawSdCm,
@@ -251,8 +259,8 @@ export function calculateCohortSummary(records: EmaStabilityMetrics[]): CohortSu
       medianEmaSdCm: 0,
       minEmaSdCm: 0,
       maxEmaSdCm: 0,
-      meanNoiseReductionPct: 0,
-      medianNoiseReductionPct: 0,
+      meanNoiseReductionPct: null,
+      medianNoiseReductionPct: null,
       stableCount: 0,
       moderateCount: 0,
       elevatedNoiseCount: 0,
@@ -263,7 +271,9 @@ export function calculateCohortSummary(records: EmaStabilityMetrics[]): CohortSu
   }
 
   const emaSds = records.map((r) => r.smoothedSdCm).filter(Number.isFinite);
-  const noiseReductions = records.map((r) => r.noiseReductionPct).filter(Number.isFinite);
+  const noiseReductions = records
+    .map((record) => record.noiseReductionPct)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
 
   const totalCount = records.length;
   const medianEmaSdCm = emaSds.length > 0 ? Number(median(emaSds).toFixed(3)) : 0;
@@ -271,9 +281,9 @@ export function calculateCohortSummary(records: EmaStabilityMetrics[]): CohortSu
   const maxEmaSdCm = emaSds.length > 0 ? Number(Math.max(...emaSds).toFixed(3)) : 0;
 
   const meanNoiseReductionPct =
-    noiseReductions.length > 0 ? Number(mean(noiseReductions).toFixed(2)) : 0;
+    noiseReductions.length > 0 ? Number(mean(noiseReductions).toFixed(2)) : null;
   const medianNoiseReductionPct =
-    noiseReductions.length > 0 ? Number(median(noiseReductions).toFixed(2)) : 0;
+    noiseReductions.length > 0 ? Number(median(noiseReductions).toFixed(2)) : null;
 
   const stableCount = records.filter((r) => r.stabilityCategory === "Stable").length;
   const moderateCount = records.filter((r) => r.stabilityCategory === "Moderate").length;

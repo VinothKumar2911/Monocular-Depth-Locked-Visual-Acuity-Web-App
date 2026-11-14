@@ -33,11 +33,13 @@ import type { TemporalDistanceSample } from "../vision/distanceSmoothing";
 export interface ValidationRecord {
   id?: number;
   sessionId: string;
-  participantId?: string; // Standardized participant ID (e.g. "P01".."P13")
-  repetition?: number; // Repetition sequence number (e.g. 1, 2, 3)
-  referenceDistanceUnit?: string; // Measurement unit (default "m")
+  participantId?: string;
+  repetition?: number;
+  referenceDistanceUnit?: "m" | "cm" | "ft" | "in";
+  recordingTimestamp?: string;
   timestamp: string;
   actualDistanceM: number;
+  protocolDistanceM?: number;
   estimatedDistanceM: number;
   absoluteErrorM: number;
   percentageError: number;
@@ -55,6 +57,7 @@ export interface ValidationRecord {
   emaAlpha?: number;
   cameraStatus?: string;
   durationSec?: number;
+  effectiveFps?: number;
   sampleCount?: number;
   droppedSamplesCount?: number;
   // Precomputed recording stability statistics
@@ -66,6 +69,15 @@ export interface ValidationRecord {
   meanRawDistanceM?: number;
   meanRawErrorM?: number;
   meanEmaErrorM?: number;
+  rawAbsoluteErrorM?: number;
+  emaAbsoluteErrorM?: number;
+  meanRawPercentageError?: number;
+  meanEmaPercentageError?: number;
+  rawVarianceM2?: number;
+  smoothedVarianceM2?: number;
+  emaRmseM?: number;
+  maxRawAbsoluteErrorM?: number;
+  maxEmaAbsoluteErrorM?: number;
   maxAbsoluteErrorM?: number;
   trackingFailures?: number;
   recordingStatus?: "VALID" | "INSUFFICIENT_SAMPLES" | "TRACKING_LOST" | "CANCELLED";
@@ -76,7 +88,7 @@ let dbPromise: Promise<IDBPDatabase> | null = null;
 function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction) {
+      upgrade(db, _oldVersion, _newVersion, transaction) {
         if (!db.objectStoreNames.contains("trials")) {
           const store = db.createObjectStore("trials", { keyPath: "id", autoIncrement: true });
           store.createIndex("sessionId", "sessionId");
@@ -115,7 +127,37 @@ export async function getTrialsForSession(sessionId: string): Promise<TrialRecor
 
 export async function saveValidationRecord(record: ValidationRecord): Promise<void> {
   const db = await getDB();
-  await db.add("validation", record);
+  const tx = db.transaction("validation", "readwrite");
+  const existingKey = await tx.store.index("sessionId").getKey(record.sessionId);
+  if (existingKey !== undefined) {
+    await tx.done;
+    throw new Error(`A validation recording with session ID "${record.sessionId}" already exists.`);
+  }
+  if (
+    record.dataSource === "RECORDED" &&
+    record.recordingStatus === "VALID" &&
+    record.participantId &&
+    record.repetition !== undefined
+  ) {
+    const existingRecords = (await tx.store.getAll()) as ValidationRecord[];
+    const duplicateSlot = existingRecords.some(
+      (existing) =>
+        existing.dataSource === "RECORDED" &&
+        existing.recordingStatus === "VALID" &&
+        existing.participantId === record.participantId &&
+        existing.repetition === record.repetition &&
+        Math.abs(
+          (existing.protocolDistanceM ?? existing.actualDistanceM) -
+          (record.protocolDistanceM ?? record.actualDistanceM)
+        ) < 0.000001
+    );
+    if (duplicateSlot) {
+      await tx.done;
+      throw new Error("A valid recording already exists for this participant, reference distance, and repetition.");
+    }
+  }
+  await tx.store.add(record);
+  await tx.done;
 }
 
 export async function getValidationRecords(sessionId?: string): Promise<ValidationRecord[]> {
@@ -183,4 +225,3 @@ export function removeKey(key: string): void {
 }
 
 export { LS_KEYS };
-
